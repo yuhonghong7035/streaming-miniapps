@@ -129,8 +129,6 @@ class MiniApp():
                  ):
         
         self.number_parallel_tasks = number_parallel_tasks
-        self.kafka_zk_hosts = kafka_zk_hosts
-        self.dask_scheduler = dask_scheduler
         self.number_clusters = number_clusters
         self.number_points_per_cluster = number_points_per_cluster
         self.number_points_per_message = number_points_per_message
@@ -138,7 +136,13 @@ class MiniApp():
         self.number_produces=number_produces
         self.number_partitions=number_partitions
         self.topic_name = topic_name
+
+        # Kafka / Dask
+        self.kafka_zk_hosts = kafka_zk_hosts
+        self.kafka_client = KafkaClient(zookeeper_hosts=kafka_zk_hosts)
+        self.number_kafka_brokers= len(self.kafka_client.brokers)
         
+        self.dask_scheduler = dask_scheduler
         if dask_scheduler is not None:
             self.dask_distributed_client = Client(dask_scheduler)   
         else:
@@ -158,17 +162,17 @@ class MiniApp():
 
     
     def clean_kafka(self):
-        cmd="%s/bin/kafka-topics.sh --delete --zookeeper %s --topic %s"%(KAFKA_HOME, self.kafka_zk_hosts, TOPIC_NAME)
+        cmd="%s/bin/kafka-topics.sh --delete --zookeeper %s --topic %s"%(KAFKA_HOME, self.kafka_zk_hosts, self.topic_name)
         print cmd
         #os.system(cmd)
         #time.sleep(60)
     
         cmd="%s/bin/kafka-topics.sh --create --zookeeper %s --replication-factor 1 --partitions %d --topic %s"%\
-                                                (KAFKA_HOME, self.kafka_zk_hosts, self.number_partitions, TOPIC_NAME)
+                                                (KAFKA_HOME, self.kafka_zk_hosts, self.number_partitions, self.topic_name)
         print cmd
         os.system(cmd)
     
-        cmd="%s/bin/kafka-topics.sh --describe --zookeeper %s --topic %s"%(KAFKA_HOME, self.kafka_zk_hosts, TOPIC_NAME)
+        cmd="%s/bin/kafka-topics.sh --describe --zookeeper %s --topic %s"%(KAFKA_HOME, self.kafka_zk_hosts, self.topic_name)
         print cmd
         os.system(cmd)
         
@@ -184,7 +188,7 @@ class MiniApp():
         
         output_file=open(RESULT_FILE, "w")
         output_file.write("Number_Clusters,Number_Points_per_Cluster,Number_Dim,Number_Points_per_Message,Interval,Number_Partitions,\
-Number_Processes,Number_Nodes,Number_Cores_Per_Node, Time,Points_per_sec,Records_per_sec,Dask_Config\n")
+Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number Brokers, Time,Points_per_sec,Records_per_sec,Dask_Config\n")
         
         global_start = time.time()
         count_produces = 0
@@ -219,7 +223,7 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Time,Points_per_sec,Records
                                                                                        self.number_clusters*self.number_points_per_cluster, 
                                                                                        end-start)
             output_file.write(
-                               "%d,%d,%d,%d,%d,%d,%d,%d,%d,%.5f,%.5f,%.5f,dask-distributed\n"%\
+                               "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.5f,%.5f,%.5f,dask-distributed\n"%\
                                (
                                   self.number_clusters,
                                   self.number_points_per_cluster,
@@ -230,6 +234,7 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Time,Points_per_sec,Records
                                   self.number_parallel_tasks, 
                                   self.number_dask_workers,
                                   self.number_dask_cores_per_worker,
+                                  self.number_kafka_brokers,
                                   (end-start), 
                                   ((self.number_clusters*self.number_points_per_cluster)/(end-start)),
                                   (((self.number_clusters*self.number_points_per_cluster)/self.number_points_per_message)/(end-start))
