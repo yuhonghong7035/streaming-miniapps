@@ -9,7 +9,8 @@ sys.path.append("..")
 #import saga_hadoop_utils
 import math
 from pykafka.partitioners import hashing_partitioner
-
+import uuid
+import logging
 ########################################################################
 # Dask
 import dask.array as da
@@ -33,10 +34,8 @@ INTERVAL=0
 NUMBER_OF_PRODUCES=1 # 10*60 = 10 minutes
 NUMBER_PARTITIONS=48
 TOPIC_NAME="Throughput"
-NUMBER_PARALLEL_TASKS=2
+NUMBER_PARALLEL_TASKS=1
 NUMBER_NODES=8
-print "**************************************\nUse %d Parallel Tasks:"%NUMBER_PARALLEL_TASKS
-
 
 def test(block_id):
     print "hello: " + str(block_id)
@@ -56,7 +55,8 @@ def produce_block(block_id=1,
                   number_clusters_per_partition=NUMBER_CLUSTER,
                   number_points_per_cluster=NUMBER_POINTS_PER_CLUSTER,
                   number_points_per_message = NUMBER_POINTS_PER_MESSAGE,
-                  number_dim=NUMBER_DIM):
+                  number_dim=NUMBER_DIM,
+                  topic_name=TOPIC_NAME):
     start = time.time()
     num_messages = 0
     count_bytes  = 0
@@ -66,7 +66,7 @@ def produce_block(block_id=1,
 
     # init Kafka
     client = KafkaClient(zookeeper_hosts=kafka_zk_hosts)
-    topic = client.topics[TOPIC_NAME]
+    topic = client.topics[topic_name]
     producer = topic.get_sync_producer(partitioner=hashing_partitioner)
     
     if producer is None: print "Producer None"; return -1
@@ -84,14 +84,14 @@ def produce_block(block_id=1,
     last_index=0
     count_bytes = 0
     for i in range(number_messages):
-        print "Messages#: %d, Points: %d - %d, Points/Message: %d, KBytes: %.1f, KBytes/sec: %s"%\
+        logging.debug("Messages#: %d, Points: %d - %d, Points/Message: %d, KBytes: %.1f, KBytes/sec: %s"%\
                                      (num_messages+1,
                                       last_index,                                                                                           
                                       last_index+number_points_per_message, 
                                       
                                       number_points_per_message,
                                       count_bytes/1024,
-                                      count_bytes/1024/(time.time()-end_data_generation))
+                                      count_bytes/1024/(time.time()-end_data_generation))) 
         points_batch = points_np[last_index:last_index+number_points_per_message]
         points_strlist=str(points_batch.tolist())
         producer.produce(points_strlist, partition_key='{}'.format(count))
@@ -114,22 +114,48 @@ def produce_block(block_id=1,
 
 class MiniApp():
     
-    def __init__(self, number_nodes=NUMBER_NODES, 
-                       number_parallel_tasks=NUMBER_PARALLEL_TASKS,
-                       dask_scheduler=None,
-                       kafka_zk_hosts=None):
-        self.number_nodes=number_nodes
-        self.number_parallel_tasks=number_parallel_tasks
-        self.kafka_zk_hosts=kafka_zk_hosts
-        print self.kafka_zk_hosts
-        # Init Dask
-        #print "init dask: " + str(dask_scheduler)
-        #self.dask_distributed_client = Client(dask_scheduler)   
-        print "init local dask"
-        self.dask_distributed_client = Client(processes=False)   
-        #self.dask_distributed_client = Client(processes=True)   
-        #print "end init dask"
-   
+    def __init__(
+                 self, 
+                 dask_scheduler=None,
+                 kafka_zk_hosts=None,
+                 number_parallel_tasks=NUMBER_PARALLEL_TASKS,
+                 number_clusters=NUMBER_CLUSTER,
+                 number_points_per_cluster=NUMBER_POINTS_PER_CLUSTER,
+                 number_points_per_message = NUMBER_POINTS_PER_MESSAGE,
+                 number_dim=NUMBER_DIM,
+                 number_produces=NUMBER_OF_PRODUCES,
+                 number_partitions=NUMBER_PARTITIONS,
+                 topic_name = TOPIC_NAME
+                 ):
+        
+        self.number_parallel_tasks = number_parallel_tasks
+        self.kafka_zk_hosts = kafka_zk_hosts
+        self.dask_scheduler = dask_scheduler
+        self.number_clusters = number_clusters
+        self.number_points_per_cluster = number_points_per_cluster
+        self.number_points_per_message = number_points_per_message
+        self.number_dim=number_dim      
+        self.number_produces=number_produces
+        self.number_partitions=number_partitions
+        self.topic_name = topic_name
+        
+        if dask_scheduler is not None:
+            self.dask_distributed_client = Client(dask_scheduler)   
+        else:
+             self.dask_distributed_client = Client(processes=False)  
+                
+        dask_scheduler_info = self.dask_distributed_client.scheduler_info()
+        self.number_dask_workers = len(dask_scheduler_info['workers'])
+        self.number_dask_cores_per_worker = dask_scheduler_info['workers'][dask_scheduler_info['workers'].keys()[0]]["ncores"]
+          
+        print ("Kafka: %s, Dask: %s, Number Dask Nodes: %d,  Number Parallel Producers: %d"%
+                                     (self.kafka_zk_hosts, 
+                                      str(self.dask_distributed_client.scheduler_info()["address"]),
+                                      self.number_dask_workers,
+                                      self.number_parallel_tasks
+                                     )
+              )
+
     
     def clean_kafka(self):
         cmd="%s/bin/kafka-topics.sh --delete --zookeeper %s --topic %s"%(KAFKA_HOME, self.kafka_zk_hosts, TOPIC_NAME)
@@ -137,7 +163,8 @@ class MiniApp():
         #os.system(cmd)
         #time.sleep(60)
     
-        cmd="%s/bin/kafka-topics.sh --create --zookeeper %s --replication-factor 1 --partitions %d --topic %s"%(KAFKA_HOME, self.kafka_zk_hosts, NUMBER_PARTITIONS, TOPIC_NAME)
+        cmd="%s/bin/kafka-topics.sh --create --zookeeper %s --replication-factor 1 --partitions %d --topic %s"%\
+                                                (KAFKA_HOME, self.kafka_zk_hosts, self.number_partitions, TOPIC_NAME)
         print cmd
         os.system(cmd)
     
@@ -156,34 +183,28 @@ class MiniApp():
             pass
         
         output_file=open(RESULT_FILE, "w")
-        output_file.write("Number_Clusters,Number_Points_per_Cluster,Number_Dim,Number_Points_per_Message,Interval,Number_Partitions,Number_Processes,Number_Nodes,Time,Points_per_sec,Records_per_sec,Dask_Config\n")
-        #bytes = 0
-        #num_messages = 0
-        #count = 0
+        output_file.write("Number_Clusters,Number_Points_per_Cluster,Number_Dim,Number_Points_per_Message,Interval,Number_Partitions,\
+Number_Processes,Number_Nodes,Number_Cores_Per_Node, Time,Points_per_sec,Records_per_sec,Dask_Config\n")
         
         global_start = time.time()
-        #for num_points_per_message in NUMBER_POINTS_PER_MESSAGE:
-        num_points_per_message = NUMBER_POINTS_PER_MESSAGE
-        #for idx, num_cluster in enumerate([NUMBER_CLUSTER]):
-        num_cluster = NUMBER_CLUSTER
         count_produces = 0
-        num_point_per_cluster = NUMBER_POINTS_PER_CLUSTER
-        while count_produces < NUMBER_OF_PRODUCES:
+        while count_produces < self.number_produces:
             self.clean_kafka()
             start = time.time()
             # Using Dask Delay API
             tasks = []
-            for block_id in range(NUMBER_PARALLEL_TASKS):
-                number_clusters_per_partition = NUMBER_CLUSTER/NUMBER_PARALLEL_TASKS 
+            for block_id in range(self.number_parallel_tasks):
+                number_clusters_per_partition = self.number_clusters/self.number_parallel_tasks 
                 print "Generate Block ID: " + str(block_id)
                 #produce_block(block_id, self.kafka_zk_hosts)
                 t = delayed(produce_block, pure=False)(
                                                        block_id, 
                                                        self.kafka_zk_hosts,
                                                        number_clusters_per_partition=number_clusters_per_partition,
-                                                       number_points_per_cluster=NUMBER_POINTS_PER_CLUSTER,
-                                                       number_points_per_message = NUMBER_POINTS_PER_MESSAGE,
-                                                       number_dim=NUMBER_DIM
+                                                       number_points_per_cluster=self.number_points_per_cluster,
+                                                       number_points_per_message = self.number_points_per_message,
+                                                       number_dim=self.number_dim,
+                                                       topic_name=self.topic_name
                                                       )
                 tasks.append(t)
                 
@@ -192,14 +213,28 @@ class MiniApp():
             print str(res)
             print "End Produce via Dask"
             end = time.time()
-            print "Number: %d, Number Processes: %d, Time to produce %d points: %.1f"%(count_produces, NUMBER_PARALLEL_TASKS, 
-                                                                                       num_cluster*num_point_per_cluster, end-
-                                                                                       start)
-            output_file.write("%d,%d,%d,%d,%d,%d,%d,%d,%.5f,%.5f,%.5f,dask-distributed\n"%(num_cluster,num_point_per_cluster,NUMBER_DIM, 
-                                                          num_points_per_message,INTERVAL,NUMBER_PARTITIONS,NUMBER_PARALLEL_TASKS, NUMBER_NODES,
-                                                                     (end-start), ((num_cluster*num_point_per_cluster)/(end-start)),
-                                                                         (((num_cluster*num_point_per_cluster)/num_points_per_message)/(end-start))
-                                                                         ))
+            
+             
+            print "Number: %d, Number Parallel Tasks: %d, Time to produce %d points: %.1f"%(count_produces, self.number_parallel_tasks, 
+                                                                                       self.number_clusters*self.number_points_per_cluster, 
+                                                                                       end-start)
+            output_file.write(
+                               "%d,%d,%d,%d,%d,%d,%d,%d,%d,%.5f,%.5f,%.5f,dask-distributed\n"%\
+                               (
+                                  self.number_clusters,
+                                  self.number_points_per_cluster,
+                                  self.number_dim, 
+                                  self.number_points_per_message,
+                                  INTERVAL,
+                                  NUMBER_PARTITIONS,
+                                  self.number_parallel_tasks, 
+                                  self.number_dask_workers,
+                                  self.number_dask_cores_per_worker,
+                                  (end-start), 
+                                  ((self.number_clusters*self.number_points_per_cluster)/(end-start)),
+                                  (((self.number_clusters*self.number_points_per_cluster)/self.number_points_per_message)/(end-start))
+                                )
+                               )
             output_file.flush()
             count_produces = count_produces + 1
         
