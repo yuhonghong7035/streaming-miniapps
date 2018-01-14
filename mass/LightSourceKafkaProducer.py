@@ -1,4 +1,11 @@
-### Kafka Producer Multiprocess
+""" 
+Kafka Producer Multiprocess
+
+For light source, broker config (server.properties) needs to be adjusted to allow larger messages:
+
+message.max.bytes = 2086624
+
+"""
 
 from pykafka import KafkaClient
 import numpy as np
@@ -11,6 +18,8 @@ import math
 from pykafka.partitioners import hashing_partitioner
 import uuid
 import logging
+import pkg_resources
+
 ########################################################################
 # Dask
 import dask.array as da
@@ -50,7 +59,7 @@ def get_random_cluster_points(number_points, number_dim):
     p = sigma * np.random.randn(number_points, number_dim) + mu
     return p
     
-def produce_block(block_id=1,
+def produce_block_kmeans(block_id=1,
                   kafka_zk_hosts=None,
                   number_clusters_per_partition=NUMBER_CLUSTER,
                   number_points_per_cluster=NUMBER_POINTS_PER_CLUSTER,
@@ -111,16 +120,34 @@ def produce_block(block_id=1,
     }
     return stats 
 
+######################################################################################
+# Light Source
 
 def produce_block_light(block_id=1,
                         kafka_zk_hosts=None,
-                         data="tooth.h5"):
-    
+                        number_messages = 1,
+                        topic_name=TOPIC_NAME):
     client = KafkaClient(zookeeper_hosts=kafka_zk_hosts)
     topic = client.topics[topic_name]
-    producer = topic.get_sync_producer(partitioner=hashing_partitioner)
-   
-  
+    producer = topic.get_sync_producer(max_request_size=2086624,
+                                       partitioner=hashing_partitioner)
+    data = get_lightsource_data()
+    count = 0
+    for i in range(number_messages):
+        producer.produce(data, partition_key='{}'.format(count))
+        count = count+ 1
+        
+    
+def get_lightsource_data():
+    module = "mass"
+    data = None
+    data_file = pkg_resources.resource_filename(module, "tooth.h5")
+    with open(data_file, "r") as f:
+        data = f.read()
+    print("Access sample data: " + module + "; File: tooth.h5; Size: " + str(len(data)))
+    return data
+
+#######################################################################################
 
 class MiniApp():
     
@@ -129,23 +156,31 @@ class MiniApp():
                  dask_scheduler=None,
                  kafka_zk_hosts=None,
                  number_parallel_tasks=NUMBER_PARALLEL_TASKS,
-                 number_clusters=NUMBER_CLUSTER,
-                 number_points_per_cluster=NUMBER_POINTS_PER_CLUSTER,
-                 number_points_per_message = NUMBER_POINTS_PER_MESSAGE,
-                 number_dim=NUMBER_DIM,
+                 number_clusters=NUMBER_CLUSTER,  # kmeans
+                 number_points_per_cluster=NUMBER_POINTS_PER_CLUSTER,  # kmeans
+                 number_points_per_message = NUMBER_POINTS_PER_MESSAGE,  # kmeans
+                 number_dim=NUMBER_DIM, # kmeans
+                 number_messages=1, # light
                  number_produces=NUMBER_OF_PRODUCES,
                  number_partitions=NUMBER_PARTITIONS,
-                 topic_name = TOPIC_NAME
+                 topic_name = TOPIC_NAME,
+                 application_type = "kmeans" # kmeans or light
                  ):
         
-        self.number_parallel_tasks = number_parallel_tasks
+        # KMeans specific configuration
         self.number_clusters = number_clusters
         self.number_points_per_cluster = number_points_per_cluster
         self.number_points_per_message = number_points_per_message
-        self.number_dim=number_dim      
-        self.number_produces=number_produces
-        self.number_partitions=number_partitions
+        self.number_dim=number_dim     
+        
+        #Light Source Configuration
+        self.number_messages = number_messages
+        
+        self.number_parallel_tasks = number_parallel_tasks
+        self.number_produces = number_produces
+        self.number_partitions = number_partitions
         self.topic_name = topic_name
+        self.application_type = application_type
 
         # Kafka / Dask
         self.kafka_zk_hosts = kafka_zk_hosts
@@ -198,7 +233,7 @@ class MiniApp():
         
         output_file=open(RESULT_FILE, "w")
         output_file.write("Number_Clusters,Number_Points_per_Cluster,Number_Dim,Number_Points_per_Message,Interval,Number_Partitions,\
-Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number Brokers, Time,Points_per_sec,Records_per_sec,Dask_Config\n")
+Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points_per_sec,Records_per_sec,Dask_Config\n")
         
         global_start = time.time()
         count_produces = 0
@@ -208,19 +243,32 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number Brokers, Time,Points
             # Using Dask Delay API
             tasks = []
             for block_id in range(self.number_parallel_tasks):
-                number_clusters_per_partition = self.number_clusters/self.number_parallel_tasks 
-                print "Generate Block ID: " + str(block_id)
-                #produce_block(block_id, self.kafka_zk_hosts)
-                t = delayed(produce_block, pure=False)(
-                                                       block_id, 
-                                                       self.kafka_zk_hosts,
-                                                       number_clusters_per_partition=number_clusters_per_partition,
-                                                       number_points_per_cluster=self.number_points_per_cluster,
-                                                       number_points_per_message = self.number_points_per_message,
-                                                       number_dim=self.number_dim,
-                                                       topic_name=self.topic_name
-                                                      )
-                tasks.append(t)
+                if self.application_type == "kmeans":
+                        print "Generate Block ID: " + str(block_id)
+                        number_clusters_per_partition = self.number_clusters/self.number_parallel_tasks 
+                        #produce_block(block_id, self.kafka_zk_hosts)
+                        t = delayed(produce_block_kmeans, pure=False)(
+                                                               block_id, 
+                                                               self.kafka_zk_hosts,
+                                                               number_clusters_per_partition=number_clusters_per_partition,
+                                                               number_points_per_cluster=self.number_points_per_cluster,
+                                                               number_points_per_message = self.number_points_per_message,
+                                                               number_dim=self.number_dim,
+                                                               topic_name=self.topic_name
+                                                              )
+                        tasks.append(t)
+                elif self.application_type == "light":
+                    for block_id in range(self.number_parallel_tasks):
+                        t = delayed(produce_block_light, pure=False)(
+                                                               block_id, 
+                                                               self.kafka_zk_hosts,
+                                                               self.number_messages,
+                                                               topic_name=self.topic_name
+                                                              )
+                        tasks.append(t)
+                else:
+                    print "Unknown Application/Data Source Type"
+                
                 
             print "Waiting for Dask Tasks to complete"
             res = delayed(tasks).compute()

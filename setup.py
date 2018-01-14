@@ -78,7 +78,7 @@ setup(name='Streaming Mini Apps',
             #     "spark", "commandline"],
 
       # data files for easy_install
-      package_data= {'': ['*.xml', '*.yaml', '*.properties']},
+      package_data= {'': ['*.h5', '*.xml', '*.yaml', '*.properties']},
       install_requires=['pykafka', "setuptools-git" ],
       #entry_points = {
       #  'console_scripts': ['streaming-miniapp=commandline.main:main',
