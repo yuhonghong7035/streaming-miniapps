@@ -28,15 +28,11 @@ from dask.delayed import delayed
 from distributed import Client
      
 ########################################################################
-
-
-
+# Default Configuration Variables
 KAFKA_HOME="/home/01131/tg804093/work/kafka_2.11-1.0.0"
 NUMBER_CLUSTER=100
 TOTAL_NUMBER_POINTS=10000
 NUMBER_POINTS_PER_CLUSTER=int(math.ceil(float(TOTAL_NUMBER_POINTS)/NUMBER_CLUSTER))
-
-
 NUMBER_DIM=3 # 1 Point == ~62 Bytes
 NUMBER_POINTS_PER_MESSAGE=500 # 3-D Point == 304 KB
 INTERVAL=0
@@ -46,12 +42,8 @@ TOPIC_NAME="Throughput"
 NUMBER_PARALLEL_TASKS=1
 NUMBER_NODES=8
 
-def test(block_id):
-    print "hello: " + str(block_id)
-    return block_id
 
-
-#############################################################
+########################################################################
 
 def get_random_cluster_points(number_points, number_dim):
     mu = np.random.randn()
