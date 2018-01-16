@@ -245,7 +245,7 @@ class MiniApp(object):
                  topic_name = "test",
                  application_type = "kmeans", # kmeans or light
                  streaming_window =60, # streaming window in sec
-                 scenario = SCENARIO
+                 test_scenario = SCENARIO
                  ):
         
         # Spark
@@ -257,7 +257,8 @@ class MiniApp(object):
         self.kafka_brokers = getKafkaBroker(self.kafka_zk_hosts, 'kafka')
         self.kafka_client = KafkaClient(zookeeper_hosts=self.kafka_zk_hosts)
         self.number_partitions = get_number_partitions(self.kafka_zk_hosts, self.topic_name)
-        self.scenario = scenario   
+        self.scenario = test_scenario  
+        global SCENARIO
         SCENARIO=self.scenario
         self.streaming_window = int(streaming_window)
         print "Streaming Window: %d sec"%self.streaming_window
