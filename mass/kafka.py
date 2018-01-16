@@ -19,6 +19,7 @@ from pykafka.partitioners import hashing_partitioner
 import uuid
 import logging
 import pkg_resources
+import threading
 
 ########################################################################
 # Dask
@@ -303,7 +304,8 @@ class MiniApp():
         print cmd
         os.system(cmd)
         
-    
+ 
+        
     
     def run(self):          
         run_timestamp=datetime.datetime.now()
@@ -387,4 +389,17 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
             time.sleep(INTERVAL)
         
         output_file.close()
+        
+        
+        
+    def run_in_background(self):
+        self.thread = threading.Thread(target=self.run, args=())
+        self.thread.daemon = True   # Daemonize thread
+        self.thread.start()   
+    
+    def wait(self):
+        self.thread.join()
+        
+    def cancel(self):
+        self.thread.cancel()
         

@@ -298,8 +298,9 @@ class MiniApp(object):
         global model
         model = StreamingKMeans(k=10, decayFactor=decayFactor, timeUnit=timeUnit).setRandomCenters(3, 1.0, 0)
 
-        print "Number Partitions: "   + self.number_partitions
-        print "Spark Master: " + self.spark_master
+        print "Topic: %s, Number Partitions: %d, Spark Master:%s"%(self.topic_name, 
+                                                                   self.number_partitions,
+                                                                   self.spark_master)
         
         fromOffset = {}
         for i in range(int(self.number_partitions)):
@@ -375,11 +376,10 @@ if __name__ == "__main__":
     
     spark_details = {'master_url':sys.argv[1]}
     kafka_details = {'master_url':sys.argv[2]}
-    topic_name = sys.argv[3]
     mini = MiniApp(
                      spark_master=spark_details["master_url"],
                      kafka_zk_hosts=kafka_details["master_url"],
-                     topic_name = "test",
+                     topic_name = sys.argv[3],
                      scenario = sys.argv[4],
                      streaming_window = sys.argv[5]
                     )
