@@ -1,9 +1,9 @@
 #!/bin/python
 #  
-# /home/01131/tg804093/work/spark-2.2.1-bin-hadoop2.7/bin/spark-submit --packages org.apache.spark:spark-streaming-kafka-0-8_2.11:2.0.2 --conf "spark.executor.memory=110g" --files ../saga_hadoop_utils.py KMeans_SparkStreamingThroughputConsumer.py 
+# /home/01131/tg804093/work/spark-2.2.1-bin-hadoop2.7/bin/spark-submit --packages org.apache.spark:spark-streaming-kafka-0-8_2.11:2.2.1 --conf "spark.executor.memory=110g" --files ../saga_hadoop_utils.py KMeans_SparkStreamingThroughputConsumer.py 
 # 
 # With app log:
-#  /home/01131/tg804093/work/spark-2.2.1-bin-hadoop2.7/bin/spark-submit --packages org.apache.spark:spark-streaming-kafka-0-8_2.11:2.0.2 --conf spark.eventLog.enabled=true --conf "spark.eventLog.dir=file:///work/01131/tg804093/wrangler/spark-logs" --files ../saga_hadoop_utils.py  KMeans_SparkStreamingThroughputConsumer.py
+#  /home/01131/tg804093/work/spark-2.2.1-bin-hadoop2.7/bin/spark-submit --packages org.apache.spark:spark-streaming-kafka-0-8_2.11:2.2.1 --conf spark.eventLog.enabled=true --conf "spark.eventLog.dir=file:///work/01131/tg804093/wrangler/spark-logs" --files ../saga_hadoop_utils.py  KMeans_SparkStreamingThroughputConsumer.py
 
 
 import os
@@ -21,9 +21,10 @@ import socket
 import re
 import pandas as pd
 import pkg_resources
+import subprocess
 
 #os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages org.apache.spark:spark-streaming-kafka-0-10_2.11:2.2.1 pyspark-shell'
-#os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages org.apache.spark:spark-streaming-kafka-0-8:2.2.1'
+#os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages org.apache.spark:spark-streaming-kafka-0-8_2:2.2.1'
 
 import pyspark
 from pyspark.streaming.listener import StreamingListener
@@ -40,7 +41,7 @@ from pykafka import KafkaClient
 # Get current cluster setup from work directory
 KAFKA_HOME="/home/01131/tg804093/work/kafka_2.11-1.0.0"
 SPARK_HOME="/home/01131/tg804093/work/spark-2.2.1-bin-hadoop2.7"
-
+SPARK_KAFKA_PACKAGE="org.apache.spark:spark-streaming-kafka-0-8_2.11:2.2.1"
 SPARK_APP_PORT=4040 #4041 if ngrok is running
 #SARK_MASTER="local[1]"
 SPARK_LOCAL_IP=socket.gethostbyname(socket.gethostname())
@@ -51,6 +52,11 @@ SCENARIO="16_Producer_Kmeans"
 
 #######################################################################################
 
+# Global info shared across all functions
+run_timestamp=datetime.datetime.now()
+spark_cores=1
+number_partitions=1
+model = None
 
 def get_number_partitions(kafka_zk_hosts, topic):
     try:
@@ -117,12 +123,15 @@ class BatchInfoCollector(StreamingListener):
         info = batchCompleted.batchInfo()
         submissionTime = datetime.datetime.fromtimestamp(info.submissionTime()/1000).isoformat()
         
-        output_spark_metrics.write("%s, %s, %d, %d, %d,%s\n"%(str(info.batchTime()), submissionTime, \
+        SPARK_RESULT_FILE="results/spark-metrics-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
+        with open(SPARK_RESULT_FILE, "a") as output_spark_metrics:
+            output_spark_metrics.write("%s, %s, %d, %d, %d,%s\n"%(str(info.batchTime()), submissionTime, \
                                                          info.schedulingDelay(), info.totalDelay(), 
                                                               info.numRecords(), SCENARIO))
-        output_spark_metrics.flush()
+            output_spark_metrics.flush()
         self.batchInfosCompleted.append(batchCompleted.batchInfo())
 
+        
     def onStreamingStarted(self, streamStarted):  
         pass
         
@@ -162,12 +171,18 @@ def printOffsetRanges(rdd):
     for o in offsetRanges:
         print "%s %s %s %s" % (o.topic, o.partition, o.fromOffset, o.untilOffset)
 
+
+######################################################################################
+# different process functions
+
 def count_records(rdd):    
     count = rdd.count()
     return count
-        
+
+
 def pre_process(datetime, rdd):  
-    #print (str(type(time)) + " " + str(type(rdd)))    
+    #print (str(type(time)) + " " + str(type(rdd))) 
+    global run_timestamp
     start = time.time()    
     points=rdd.map(lambda p: p[1]).flatMap(lambda a: eval(a)).map(lambda a: Vectors.dense(a))
     end_preproc=time.time()
@@ -175,14 +190,15 @@ def pre_process(datetime, rdd):
     end_count = time.time()
     RESULT_FILE= "results/spark-pre_process-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
     with open(RESULT_FILE, "a") as output_file:
-        output_file.write("Points PreProcess, %d, %d, %s, %.5f\n"%(spark_cores, count, NUMBER_PARTITIONS, end_preproc-start))
-        output_file.write("Points Count, %d, %d, %s, %.5f\n"%(spark_cores, count, NUMBER_PARTITIONS, end_count-end_preproc))
+        output_file.write("Points PreProcess, %d, %d, %s, %.5f\n"%(spark_cores, count, number_partitions, end_preproc-start))
+        output_file.write("Points Count, %d, %d, %s, %.5f\n"%(spark_cores, count, number_partitions, end_count-end_preproc))
         output_file.flush()
     return points
     #points.pprint()
     #model.trainOn(points)
 
 def model_update(rdd):
+    global run_timestamp
     count = rdd.count()
     start = time.time()
     lastest_model = model.latestModel()
@@ -192,7 +208,7 @@ def model_update(rdd):
     #end_pred = time.time()
     RESULT_FILE= "results/spark-model_update-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
     with open(RESULT_FILE, "a") as output_file:
-        output_file.write("KMeans Model Update, %d, %d, %s, %.5f\n"%(spark_cores, count,NUMBER_PARTITIONS, end_train-start))
+        output_file.write("KMeans Model Update, %d, %d, %s, %.5f\n"%(spark_cores, count, number_partitions, end_train-start))
         output_file.flush()
     #output_file.write("KMeans Prediction, %.3f\n"%(end_pred-end_train))
     #return predictions
@@ -215,36 +231,45 @@ class MiniApp(object):
                  number_clusters=1,  # kmeans
                  number_dim=3, # kmeans
                  topic_name = "test",
-                 application_type = "kmeans" # kmeans or light
+                 application_type = "kmeans", # kmeans or light
+                 streaming_window =60, # streaming window in sec
+                 scenario = SCENARIO
                  ):
         
         # Spark
         self.spark_master = spark_master
-        self.spark_context = pyspark.SparkContext(master=self.spark_master, 
-                                                  appName="Streaming MASA")
-        
+        self.spark_context = None
         # Kafka
         self.topic_name = topic_name
         self.kafka_zk_hosts = kafka_zk_hosts
         self.kafka_client = KafkaClient(zookeeper_hosts=self.kafka_zk_hosts)
         self.number_partitions = get_number_partitions(self.kafka_zk_hosts, self.topic_name)
-            
-            
+        self.scenario = scenario   
+        SCENARIO=self.scenario
+        self.streaming_window = int(streaming_window)
+        print "Streaming Window: %d sec"%self.streaming_window
+                    
     def start(self):  
         #######################################################################################
         # Init Spark
         start = time.time()
-        spark_cores=get_application_details(self.spark_context)
+        self.spark_context = pyspark.SparkContext(master=self.spark_master, 
+                                                  appName="Streaming MASA")
         ssc_start = time.time()    
-        ssc = StreamingContext(self.spark_context, STREAMING_WINDOW)
+        ssc = StreamingContext(self.spark_context, self.streaming_window)
         batch_collector = BatchInfoCollector()
         ssc.addStreamingListener(batch_collector)
+        
+        # make basic cluster information globally available
+        global spark_cores 
+        global number_partitions
+        spark_cores=get_application_details(self.spark_context)
+        number_partitions = self.number_partitions
               
         #print str(sc.parallelize([2,3]).collect())
         
         #######################################################################################
         # Logging
-        run_timestamp=datetime.datetime.now()
         RESULT_FILE= "results/spark-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
         SPARK_RESULT_FILE="results/spark-metrics-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
         
@@ -254,6 +279,7 @@ class MiniApp(object):
             pass
         output_spark_metrics=open(SPARK_RESULT_FILE, "w")
         output_spark_metrics.write("BatchTime, SubmissionTime, SchedulingDelay, TotalDelay, NumberRecords, Scenario\n")
+        output_spark_metrics.flush()
         output_file=open(RESULT_FILE, "w")
         output_file.write("Measurement,Spark Cores,Number Points,Number_Partitions, Time\n")
         output_file.write("Spark Startup, %d, %d, %s, %.5f\n"%(spark_cores, -1, self.number_partitions, time.time()-start))
@@ -263,11 +289,13 @@ class MiniApp(object):
         
         #######################################################################################
         # KMeans Functions
+        global decayFactor
         decayFactor=1.0
+        global timeUnit
         timeUnit="batches"
         global max_value 
         max_value = 0
-        
+        global model
         model = StreamingKMeans(k=10, decayFactor=decayFactor, timeUnit=timeUnit).setRandomCenters(3, 1.0, 0)
 
         print "Number Partitions: "   + self.number_partitions
@@ -288,7 +316,9 @@ class MiniApp(object):
         #kafka_dstream = KafkaUtils.createDirectStream(ssc, [TOPIC], {"metadata.broker.list": METABROKER_LIST,
         #                                                             "auto.offset.reset" : "smallest"}) #, fromOffsets=fromOffset)
         ssc_end = time.time()    
-        output_file.write("Spark SSC Startup, %d, %d, %s, %.5f\n"%(spark_cores, -1, self.number_partitions, ssc_end-ssc_start))
+        output_file.write("Spark SSC Startup, %d, %d, %s, %.5f\n"%(spark_cores, -1, 
+                                                                   self.number_partitions, 
+                                                                   ssc_end-ssc_start))
         
         
         #####################################################################
@@ -315,14 +345,28 @@ class MiniApp(object):
         
         
     def run(self):  
+        cmd = self._get_spark_command()
+        check_output(cmd, shell=True)
+        
+        
+    def run_in_background(self):  
+        cmd = self._get_spark_command()
+        #check_output(cmd, shell=True)
+        self.spark_process = subprocess.Popen(cmd, shell=True)
+
+        
+    def _get_spark_command(self):
         filename = os.path.abspath(__file__)
         if filename[-1]=="c": filename =filename[:-1] # remove c from "spark.pyc"
         #pkg_resources.resource_filename(module, "tooth.h5")
-        cmd = """spark-submit --master %s --packages org.apache.spark:spark-streaming-kafka-0-10_2.11:2.2.1 \
-                              --conf 'spark.executor.memory=110g' %s %s %s %s
-              """% (self.spark_master, filename, self.spark_master, self.kafka_zk_hosts, self.topic_name)
+        cmd = """spark-submit --master %s --packages %s --conf 'spark.executor.memory=110g' %s %s %s %s %s %d"""% (self.spark_master, SPARK_KAFKA_PACKAGE, filename, 
+                    self.spark_master, self.kafka_zk_hosts, self.topic_name, self.scenario, 60)
         print cmd
-        check_output(cmd, shell=True)
+        return cmd
+        
+        
+    def cancel(self):
+        self.spark_process.kill()
 
 
 
@@ -332,12 +376,14 @@ if __name__ == "__main__":
     spark_details = {'master_url':sys.argv[1]}
     kafka_details = {'master_url':sys.argv[2]}
     topic_name = sys.argv[3]
-    kmeans = MiniApp(
+    mini = MiniApp(
                      spark_master=spark_details["master_url"],
                      kafka_zk_hosts=kafka_details["master_url"],
-                     topic_name = "test"
+                     topic_name = "test",
+                     scenario = sys.argv[4],
+                     streaming_window = sys.argv[5]
                     )
-    kmeans.run()
+    mini.start()
 
 
 #####################################################################
