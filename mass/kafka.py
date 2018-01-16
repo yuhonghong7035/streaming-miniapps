@@ -321,8 +321,8 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
         
         global_start = time.time()
         count_produces = 0
+        self.clean_kafka()
         while count_produces < self.number_produces:
-            self.clean_kafka()
             start = time.time()
             # Using Dask Delay API
             tasks = []

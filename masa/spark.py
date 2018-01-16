@@ -22,6 +22,8 @@ import re
 import pandas as pd
 import pkg_resources
 import subprocess
+from kazoo.client import KazooClient
+import json
 
 #os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages org.apache.spark:spark-streaming-kafka-0-10_2.11:2.2.1 pyspark-shell'
 #os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages org.apache.spark:spark-streaming-kafka-0-8_2:2.2.1'
@@ -49,6 +51,7 @@ TOPIC='Throughput'
 NUMBER_EXECUTORS=1
 STREAMING_WINDOW=10
 SCENARIO="16_Producer_Kmeans"
+KAFKA_STREAM = "Direct"
 
 #######################################################################################
 
@@ -67,6 +70,15 @@ def get_number_partitions(kafka_zk_hosts, topic):
         return number
     except:
         return 0
+    
+def getKafkaBroker(zk, path):
+    zk = KazooClient(hosts=zk,read_only=True)
+    zk.start()
+    for node in zk.get_children(path+'/brokers/ids'):
+        data, stats = zk.get(path+'/brokers/ids/'+node)
+        props = json.loads(data)
+        yield props['host']+':'+str(props['port'])
+    zk.stop()
 
 def get_application_details(sc):
     try:
@@ -242,6 +254,7 @@ class MiniApp(object):
         # Kafka
         self.topic_name = topic_name
         self.kafka_zk_hosts = kafka_zk_hosts
+        self.kafka_brokers = getKafkaBroker(self.kafka_zk_hosts, 'kafka')
         self.kafka_client = KafkaClient(zookeeper_hosts=self.kafka_zk_hosts)
         self.number_partitions = get_number_partitions(self.kafka_zk_hosts, self.topic_name)
         self.scenario = scenario   
@@ -298,9 +311,10 @@ class MiniApp(object):
         global model
         model = StreamingKMeans(k=10, decayFactor=decayFactor, timeUnit=timeUnit).setRandomCenters(3, 1.0, 0)
 
-        print "Topic: %s, Number Partitions: %d, Spark Master:%s"%(self.topic_name, 
-                                                                   self.number_partitions,
-                                                                   self.spark_master)
+        print "Topic: %s, Number Partitions: %s, Spark Master:%s, Kafka Broker: %s"%(self.topic_name, 
+                                                                   str(self.number_partitions),
+                                                                   self.spark_master,
+                                                                   self.kafka_brokers)
         
         fromOffset = {}
         for i in range(int(self.number_partitions)):
@@ -309,9 +323,18 @@ class MiniApp(object):
         
         #######################################################################################
         # Spark Helper
-        kafka_dstream = KafkaUtils.createStream(ssc, self.kafka_zk_hosts, 
+        kafka_dstream = None
+        if KAFKA_STREAM == "Direct":
+            print "Use Direct Kafka Connection"
+            kafka_dstream = KafkaUtils.createDirectStream(ssc, [self.topic_name], 
+                                                          {"metadata.broker.list": self.kafka_broker,
+                                                                     "auto.offset.reset" : "smallest"})
+        elif KAFKA_STREAM == "Receiver":
+            print "Use Receiver Kafka Connection"
+            kafka_dstream = KafkaUtils.createStream(ssc, self.kafka_zk_hosts, 
                                                      "spark-streaming-consumer", 
                                                      {self.topic_name: 1})
+            
         #kafka_param: "metadata.broker.list": brokers
         #              "auto.offset.reset" : "smallest" # start from beginning
         #kafka_dstream = KafkaUtils.createDirectStream(ssc, [TOPIC], {"metadata.broker.list": METABROKER_LIST,
