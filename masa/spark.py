@@ -70,15 +70,6 @@ def get_number_partitions(kafka_zk_hosts, topic):
         return number
     except:
         return 0
-    
-def getKafkaBroker(zk, path):
-    zk = KazooClient(hosts=zk,read_only=True)
-    zk.start()
-    for node in zk.get_children(path+'/brokers/ids'):
-        data, stats = zk.get(path+'/brokers/ids/'+node)
-        props = json.loads(data)
-        yield props['host']+':'+str(props['port'])
-    zk.stop()
 
 def get_application_details(sc):
     try:
@@ -99,13 +90,11 @@ def get_application_details(sc):
             if (max_id == (NUMBER_EXECUTORS-1)):
                 break
             time.sleep(.1)
-        return cores
+            return cores
     except:
-        return 0
-            
-    # http://129.114.58.102:4040/api/v1/applications/
-    # http://129.114.58.102:4040/api/v1/applications/app-20160821102227-0003/executors
-    
+        pass
+    return 0
+ 
     
 def get_streaming_performance_details(app_id, filename):
     """curl http://localhost:4041/api/v1/applications/app-20170805185159-0004/streaming/batches"""
@@ -132,6 +121,7 @@ class BatchInfoCollector(StreamingListener):
         self.batchInfosStarted.append(batchStarted.batchInfo())
 
     def onBatchCompleted(self, batchCompleted):
+        global run_timestamp
         info = batchCompleted.batchInfo()
         submissionTime = datetime.datetime.fromtimestamp(info.submissionTime()/1000).isoformat()
         
@@ -198,7 +188,7 @@ def pre_process(datetime, rdd):
     start = time.time()    
     points=rdd.map(lambda p: p[1]).flatMap(lambda a: eval(a)).map(lambda a: Vectors.dense(a))
     end_preproc=time.time()
-    count = points.count()
+    count = -1 #points.count()
     end_count = time.time()
     RESULT_FILE= "results/spark-pre_process-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
     with open(RESULT_FILE, "a") as output_file:
@@ -211,7 +201,7 @@ def pre_process(datetime, rdd):
 
 def model_update(rdd):
     global run_timestamp
-    count = rdd.count()
+    count = -1 #rdd.count()
     start = time.time()
     lastest_model = model.latestModel()
     lastest_model.update(rdd, decayFactor, timeUnit)    
@@ -254,8 +244,8 @@ class MiniApp(object):
         # Kafka
         self.topic_name = topic_name
         self.kafka_zk_hosts = kafka_zk_hosts
-        self.kafka_brokers = getKafkaBroker(self.kafka_zk_hosts, 'kafka')
         self.kafka_client = KafkaClient(zookeeper_hosts=self.kafka_zk_hosts)
+        self.kafka_brokers = ",".join(["%s:%d"%(i.host, i.port) for i in self.kafka_client.brokers.values()])
         self.number_partitions = get_number_partitions(self.kafka_zk_hosts, self.topic_name)
         self.scenario = test_scenario  
         global SCENARIO
@@ -284,13 +274,12 @@ class MiniApp(object):
         
         #######################################################################################
         # Logging
-        RESULT_FILE= "results/spark-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
-        SPARK_RESULT_FILE="results/spark-metrics-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
-        
         try:
             os.makedirs("results")
         except:
             pass
+        RESULT_FILE= "results/spark-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
+        SPARK_RESULT_FILE="results/spark-metrics-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
         output_spark_metrics=open(SPARK_RESULT_FILE, "w")
         output_spark_metrics.write("BatchTime, SubmissionTime, SchedulingDelay, TotalDelay, NumberRecords, Scenario\n")
         output_spark_metrics.flush()
@@ -328,7 +317,7 @@ class MiniApp(object):
         if KAFKA_STREAM == "Direct":
             print "Use Direct Kafka Connection"
             kafka_dstream = KafkaUtils.createDirectStream(ssc, [self.topic_name], 
-                                                          {"metadata.broker.list": self.kafka_broker,
+                                                          {"metadata.broker.list": self.kafka_brokers,
                                                                      "auto.offset.reset" : "smallest"})
         elif KAFKA_STREAM == "Receiver":
             print "Use Receiver Kafka Connection"
@@ -357,9 +346,7 @@ class MiniApp(object):
         
         #####################################################################
         # Scenario KMeans
-        
         points = kafka_dstream.transform(pre_process)
-        #points.pprint()
         points.foreachRDD(model_update)
 
         ssc.start()
@@ -404,7 +391,7 @@ if __name__ == "__main__":
                      spark_master=spark_details["master_url"],
                      kafka_zk_hosts=kafka_details["master_url"],
                      topic_name = sys.argv[3],
-                     scenario = sys.argv[4],
+                     test_scenario = sys.argv[4],
                      streaming_window = sys.argv[5]
                     )
     mini.start()

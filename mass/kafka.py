@@ -235,7 +235,9 @@ class MiniApp():
                  number_produces=NUMBER_OF_PRODUCES,
                  number_partitions=NUMBER_PARTITIONS,
                  topic_name = TOPIC_NAME,
-                 application_type = "kmeans" # kmeans or light
+                 application_type = "kmeans", # kmeans or light
+                 produce_interval = 0,
+                 clean_after_produce = False
                  ):
         
         self.application_type = application_type
@@ -264,7 +266,8 @@ class MiniApp():
         self.number_produces = number_produces
         self.number_partitions = number_partitions
         self.topic_name = topic_name
-       
+        self.produce_interval = produce_interval
+        self.clean_after_produce = clean_after_produce
         # Kafka / Dask
         self.kafka_zk_hosts = kafka_zk_hosts
         self.kafka_client = KafkaClient(zookeeper_hosts=kafka_zk_hosts)
@@ -323,6 +326,7 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
         count_produces = 0
         self.clean_kafka()
         while count_produces < self.number_produces:
+            if self.clean_after_produce: self.clean_kafka()
             start = time.time()
             # Using Dask Delay API
             tasks = []
@@ -386,7 +390,7 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
             output_file.flush()
             count_produces = count_produces + 1
         
-            time.sleep(INTERVAL)
+            time.sleep(self.produce_interval)
         
         output_file.close()
         
