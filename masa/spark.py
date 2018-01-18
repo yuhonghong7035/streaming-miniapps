@@ -127,8 +127,10 @@ class BatchInfoCollector(StreamingListener):
         
         SPARK_RESULT_FILE="results/spark-metrics-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
         with open(SPARK_RESULT_FILE, "a") as output_spark_metrics:
-            output_spark_metrics.write("%s, %s, %d, %d, %d,%s\n"%(str(info.batchTime()), submissionTime, \
-                                                         info.schedulingDelay(), info.totalDelay(), 
+            output_spark_metrics.write("%s, %s, %d, %d, %d, %d,%s\n"%(str(info.batchTime()), submissionTime, \
+                                                         info.schedulingDelay(), 
+                                                              info.processingDelay(),
+                                                              info.totalDelay(), 
                                                               info.numRecords(), SCENARIO))
             output_spark_metrics.flush()
         self.batchInfosCompleted.append(batchCompleted.batchInfo())
@@ -220,6 +222,24 @@ def model_prediction(rdd):
     pass
 
 
+def lightsource_reconstruction(rdd):
+    pass
+
+def reconstruct(message):
+    start = 0
+    end = 2
+    tf = tempfile.NamedTemporaryFile(delete=True)
+    tf.write(message.value)
+    tf.flush()
+    proj, flat, dark, theta = dxchange.read_aps_32id(tf.name, sino=(start, end))
+    theta = tomopy.angles(proj.shape[0])
+    proj = tomopy.normalize(proj, flat, dark)
+    rot_center = tomopy.find_center(proj, theta, init=290, ind=0, tol=0.5)
+    proj = tomopy.minus_log(proj)
+    recon = tomopy.recon(proj, theta, center=rot_center, algorithm='gridrec')
+    recon = tomopy.circ_mask(recon, axis=0, ratio=0.95)
+    tf.close()
+
 ##########################################################################################################################
 # Start Streaming App
 
@@ -235,7 +255,8 @@ class MiniApp(object):
                  topic_name = "test",
                  application_type = "kmeans", # kmeans or light
                  streaming_window =60, # streaming window in sec
-                 test_scenario = SCENARIO
+                 test_scenario = SCENARIO,
+                 application = "kmeans"
                  ):
         
         # Spark
@@ -248,6 +269,7 @@ class MiniApp(object):
         self.kafka_brokers = ",".join(["%s:%d"%(i.host, i.port) for i in self.kafka_client.brokers.values()])
         self.number_partitions = get_number_partitions(self.kafka_zk_hosts, self.topic_name)
         self.scenario = test_scenario  
+        self.application = application
         global SCENARIO
         SCENARIO=self.scenario
         self.streaming_window = int(streaming_window)
@@ -281,7 +303,7 @@ class MiniApp(object):
         RESULT_FILE= "results/spark-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
         SPARK_RESULT_FILE="results/spark-metrics-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
         output_spark_metrics=open(SPARK_RESULT_FILE, "w")
-        output_spark_metrics.write("BatchTime, SubmissionTime, SchedulingDelay, TotalDelay, NumberRecords, Scenario\n")
+        output_spark_metrics.write("BatchTime, SubmissionTime, SchedulingDelay, ProcessingDelay, TotalDelay, NumberRecords, Scenario\n")
         output_spark_metrics.flush()
         output_file=open(RESULT_FILE, "w")
         output_file.write("Measurement,Spark Cores,Number Points,Number_Partitions, Time\n")
@@ -346,6 +368,7 @@ class MiniApp(object):
         
         #####################################################################
         # Scenario KMeans
+        if self.application == 
         points = kafka_dstream.transform(pre_process)
         points.foreachRDD(model_update)
 
