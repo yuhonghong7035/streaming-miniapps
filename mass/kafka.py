@@ -21,6 +21,7 @@ import logging
 import pkg_resources
 import threading
 import base64
+import binascii
 
 ########################################################################
 # Dask
@@ -246,23 +247,25 @@ def produce_block_light(block_id=1,
     
     client = KafkaClient(zookeeper_hosts=kafka_zk_hosts)
     topic = client.topics[topic_name]
-    producer = topic.get_sync_producer(max_request_size=2086624,
+    producer = topic.get_sync_producer(max_request_size=3086624,
                                        partitioner=hashing_partitioner)
     data = get_lightsource_data()
-    data_b64 = str(base64.urlsafe_b64encode(data)).encode( 'utf-8' )
-    print "Base64 Len: %d"%len(data_b64)
+    #data_b64 = data.encode( 'utf-8' )
+    data_enc = binascii.hexlify(data).encode('utf-8')
+    data_enc = data_enc
+    print "Encoded Type: %s Len: %d"%(str(type(data_enc)),len(data_enc))
     end_data_generation = time.time()
     
     count = 0
     for i in range(number_messages):
-        producer.produce(data_b64, partition_key='{}'.format(count))
+        producer.produce(data_enc, partition_key='{}'.format(count))
         count = count+ 1
     end = time.time()
    
     stats = {
         "block_id": block_id, 
         "number_messages" :  number_messages,
-        "bytes_per_message_b64": str(len(data_b64)),
+        "bytes_per_message_enc": str(len(data_enc)),
         "bytes_per_message_bin": str(len(data)),
         "data_generation_time": "%5f"%(end_data_generation-start),
         "transmission_time":  "%.5f"%(end-end_data_generation),

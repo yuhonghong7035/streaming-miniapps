@@ -24,6 +24,14 @@ import pkg_resources
 import subprocess
 from kazoo.client import KazooClient
 import json
+import base64
+import binascii
+import tempfile
+import tomopy
+import dxchange
+import io
+import matplotlib
+import matplotlib.pyplot as plt
 
 #os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages org.apache.spark:spark-streaming-kafka-0-10_2.11:2.2.1 pyspark-shell'
 #os.environ['PYSPARK_SUBMIT_ARGS'] = '--packages org.apache.spark:spark-streaming-kafka-0-8_2:2.2.1'
@@ -222,14 +230,31 @@ def model_prediction(rdd):
     pass
 
 
-def lightsource_reconstruction(rdd):
-    pass
+def lightsource_reconstruction(message):
+    global run_timestamp
+    print type(message),len(message), len(message[1])
+    count = -1 #rdd.count()
+    start = time.time()
+    reconstruct(message[1])
+    end_train = time.time()
+    try:
+        os.makedirs("results")
+    except:
+        pass
+    RESULT_FILE_LIGHT= "results/spark-light-recon-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
+    with open(RESULT_FILE_LIGHT, "a") as output_file:
+        output_file.write("Light Recon, %d, %d, %s, %.5f\n"%(spark_cores, count, number_partitions, end_train-start))
+        output_file.flush()
+    return (end_train-start)
+
 
 def reconstruct(message):
     start = 0
     end = 2
+    #msg_bin = base64.b64decode(message)
+    msg_bin = binascii.unhexlify(message)
     tf = tempfile.NamedTemporaryFile(delete=True)
-    tf.write(message.value)
+    tf.write(msg_bin)
     tf.flush()
     proj, flat, dark, theta = dxchange.read_aps_32id(tf.name, sino=(start, end))
     theta = tomopy.angles(proj.shape[0])
@@ -238,8 +263,12 @@ def reconstruct(message):
     proj = tomopy.minus_log(proj)
     recon = tomopy.recon(proj, theta, center=rot_center, algorithm='gridrec')
     recon = tomopy.circ_mask(recon, axis=0, ratio=0.95)
+    #plt.imsave("/home/01131/tg804093/notebooks/streaming-miniapps/recon.png", recon[0, :,:], cmap='Greys_r')
+    #plt.savefig()
     tf.close()
+    return True
 
+    
 ##########################################################################################################################
 # Start Streaming App
 
@@ -339,8 +368,9 @@ class MiniApp(object):
         if KAFKA_STREAM == "Direct":
             print "Use Direct Kafka Connection"
             kafka_dstream = KafkaUtils.createDirectStream(ssc, [self.topic_name], 
-                                                          {"metadata.broker.list": self.kafka_brokers,
-                                                                     "auto.offset.reset" : "smallest"})
+                                                          kafkaParams={"metadata.broker.list": self.kafka_brokers,
+                                                                     "auto.offset.reset" : "smallest",
+                                                                      "fetch.message.max.bytes" : "10000000"})
         elif KAFKA_STREAM == "Receiver":
             print "Use Receiver Kafka Connection"
             kafka_dstream = KafkaUtils.createStream(ssc, self.kafka_zk_hosts, 
@@ -368,10 +398,16 @@ class MiniApp(object):
         
         #####################################################################
         # Scenario KMeans
-        if self.application == 
-        points = kafka_dstream.transform(pre_process)
-        points.foreachRDD(model_update)
-
+        if self.application == "kmeans":
+            print "kmeans"
+            points = kafka_dstream.transform(pre_process)
+            points.foreachRDD(model_update)
+        else:
+            print "Light Reconstruction"
+            #rdd = kafka_dstream.transform(lightsource_reconstruction)
+            res=kafka_dstream.map(lightsource_reconstruction)
+            res.pprint()
+            #rdd.pprint()
         ssc.start()
         ssc.awaitTermination()
         ssc.stop(stopSparkContext=True, stopGraceFully=True)
@@ -394,8 +430,9 @@ class MiniApp(object):
         filename = os.path.abspath(__file__)
         if filename[-1]=="c": filename =filename[:-1] # remove c from "spark.pyc"
         #pkg_resources.resource_filename(module, "tooth.h5")
-        cmd = """spark-submit --master %s --packages %s --conf 'spark.executor.memory=110g' %s %s %s %s %s %d"""% (self.spark_master, SPARK_KAFKA_PACKAGE, filename, 
-                    self.spark_master, self.kafka_zk_hosts, self.topic_name, self.scenario, 60)
+        cmd = """spark-submit --master %s --packages %s --conf 'spark.executor.memory=110g' %s %s %s %s %s %d %s"""% (self.spark_master, SPARK_KAFKA_PACKAGE, filename, 
+                    self.spark_master, self.kafka_zk_hosts, self.topic_name, 
+                    self.scenario, 60, self.application)
         print cmd
         return cmd
         
@@ -415,7 +452,8 @@ if __name__ == "__main__":
                      kafka_zk_hosts=kafka_details["master_url"],
                      topic_name = sys.argv[3],
                      test_scenario = sys.argv[4],
-                     streaming_window = sys.argv[5]
+                     streaming_window = sys.argv[5],
+                     application = sys.argv[6]
                     )
     mini.start()
 
