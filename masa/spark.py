@@ -69,6 +69,9 @@ spark_cores=1
 number_partitions=1
 model = None
 
+global work_dir 
+work_dir = os.getcwd()
+
 def get_number_partitions(kafka_zk_hosts, topic):
     try:
         cmd = KAFKA_HOME + "/bin/kafka-topics.sh --describe --topic %s --zookeeper %s"%(topic, kafka_zk_hosts)
@@ -232,16 +235,14 @@ def model_prediction(rdd):
 
 def lightsource_reconstruction(message):
     global run_timestamp
+    global work_dir
     print type(message),len(message), len(message[1])
     count = -1 #rdd.count()
     start = time.time()
     reconstruct(message[1])
     end_train = time.time()
-    try:
-        os.makedirs("results")
-    except:
-        pass
-    RESULT_FILE_LIGHT= "results/spark-light-recon-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
+  
+    RESULT_FILE_LIGHT= os.path.join(work_dir, "results/spark-light-recon-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv")
     with open(RESULT_FILE_LIGHT, "a") as output_file:
         output_file.write("Light Recon, %d, %d, %s, %.5f\n"%(spark_cores, count, number_partitions, end_train-start))
         output_file.flush()
