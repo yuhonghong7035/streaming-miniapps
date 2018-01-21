@@ -72,6 +72,10 @@ model = None
 global work_dir 
 work_dir = os.getcwd()
 
+
+global reconstruction_algorithm 
+reconstruction_algorithm = "gridrec"
+
 def get_number_partitions(kafka_zk_hosts, topic):
     try:
         cmd = KAFKA_HOME + "/bin/kafka-topics.sh --describe --topic %s --zookeeper %s"%(topic, kafka_zk_hosts)
@@ -234,13 +238,14 @@ def model_prediction(rdd):
     count = -1 #rdd.count()
     start = time.time()
     lastest_model = model.latestModel()
-    lastest_model.predict(rdd)
+    print "Call Predict On:"
+    model_output=lastest_model.predictOn(rdd)
     end = time.time()
     RESULT_FILE= "results/spark-model_update-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
     with open(RESULT_FILE, "a") as output_file:
         output_file.write("KMeans Model Inference, %d, %d, %s, %.5f\n"%(spark_cores, count, number_partitions, end-start))
         output_file.flush()
-    return 0
+    return model_output
 
 
 def lightsource_reconstruction(message):
@@ -260,6 +265,7 @@ def lightsource_reconstruction(message):
 
 
 def reconstruct(message):
+    global reconstruction_algorithm
     start = 0
     end = 2
     #msg_bin = base64.b64decode(message)
@@ -272,7 +278,7 @@ def reconstruct(message):
     proj = tomopy.normalize(proj, flat, dark)
     rot_center = tomopy.find_center(proj, theta, init=290, ind=0, tol=0.5)
     proj = tomopy.minus_log(proj)
-    recon = tomopy.recon(proj, theta, center=rot_center, algorithm='gridrec')
+    recon = tomopy.recon(proj, theta, center=rot_center, algorithm=reconstruction_algorithm)
     recon = tomopy.circ_mask(recon, axis=0, ratio=0.95)
     #plt.imsave("/home/01131/tg804093/notebooks/streaming-miniapps/recon.png", recon[0, :,:], cmap='Greys_r')
     #plt.savefig()
@@ -311,6 +317,13 @@ class MiniApp(object):
         self.number_partitions = get_number_partitions(self.kafka_zk_hosts, self.topic_name)
         self.scenario = test_scenario  
         self.application = application
+        self.reconstruction_algorithm = "gridrec"
+        
+        if self.application.find("-")>0:
+            self.reconstruction_algorithm=self.application.split("-")[1]
+            self.application=self.application.split("-")[0]
+        global reconstruction_algorithm
+        reconstruction_algorithm=self.reconstruction_algorithm
         self.number_clusters = int(number_clusters)
         global SCENARIO
         SCENARIO=self.scenario
@@ -374,6 +387,8 @@ class MiniApp(object):
             kafka_dstream = KafkaUtils.createDirectStream(ssc, [self.topic_name], 
                                                           kafkaParams={"metadata.broker.list": self.kafka_brokers,
                                                                      "auto.offset.reset" : "smallest",
+                                                                       "heartbeat.interval.ms": "3600000",
+                                                                       "session.timeout.ms": "3600000",
                                                                       "fetch.message.max.bytes" : "10000000"})
         elif KAFKA_STREAM == "Receiver":
             print "Use Receiver Kafka Connection"
@@ -408,7 +423,7 @@ class MiniApp(object):
         timeUnit="batches"
         global max_value 
         max_value = 0
-        global model
+        global model    
 
         model = StreamingKMeans(k=self.number_clusters, decayFactor=decayFactor, timeUnit=timeUnit).setRandomCenters(3, 1.0, 0)
 
@@ -419,7 +434,12 @@ class MiniApp(object):
         elif self.application == "kmeanspred" or self.application == "kmeansstaticpred":
             print "kmeanspred"
             points = kafka_dstream.transform(pre_process)
-            points.foreachRDD(model_prediction)
+            m=model.predictOn(points)
+            #m=points.foreachRDD(model_prediction)
+            if m is not None:
+                m.pprint()
+            else:
+                print "Result None"
         else:
             print "Light Reconstruction"
             #rdd = kafka_dstream.transform(lightsource_reconstruction)
