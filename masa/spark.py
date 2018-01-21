@@ -230,7 +230,17 @@ def model_update(rdd):
     
 
 def model_prediction(rdd):
-    pass
+    global run_timestamp
+    count = -1 #rdd.count()
+    start = time.time()
+    lastest_model = model.latestModel()
+    lastest_model.predict(rdd)
+    end = time.time()
+    RESULT_FILE= "results/spark-model_update-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
+    with open(RESULT_FILE, "a") as output_file:
+        output_file.write("KMeans Model Inference, %d, %d, %s, %.5f\n"%(spark_cores, count, number_partitions, end-start))
+        output_file.flush()
+    return 0
 
 
 def lightsource_reconstruction(message):
@@ -297,9 +307,11 @@ class MiniApp(object):
         self.kafka_zk_hosts = kafka_zk_hosts
         self.kafka_client = KafkaClient(zookeeper_hosts=self.kafka_zk_hosts)
         self.kafka_brokers = ",".join(["%s:%d"%(i.host, i.port) for i in self.kafka_client.brokers.values()])
+        print self.kafka_brokers 
         self.number_partitions = get_number_partitions(self.kafka_zk_hosts, self.topic_name)
         self.scenario = test_scenario  
         self.application = application
+        self.number_clusters = int(number_clusters)
         global SCENARIO
         SCENARIO=self.scenario
         self.streaming_window = int(streaming_window)
@@ -342,21 +354,12 @@ class MiniApp(object):
         
         
         
-        #######################################################################################
-        # KMeans Functions
-        global decayFactor
-        decayFactor=1.0
-        global timeUnit
-        timeUnit="batches"
-        global max_value 
-        max_value = 0
-        global model
-        model = StreamingKMeans(k=10, decayFactor=decayFactor, timeUnit=timeUnit).setRandomCenters(3, 1.0, 0)
-
-        print "Topic: %s, Number Partitions: %s, Spark Master:%s, Kafka Broker: %s"%(self.topic_name, 
+        
+        print "Topic: %s, Number Partitions: %s, Spark Master:%s, Kafka Broker: %s Clusters: %d"%(self.topic_name, 
                                                                    str(self.number_partitions),
                                                                    self.spark_master,
-                                                                   self.kafka_brokers)
+                                                                   self.kafka_brokers,
+                                                                   self.number_clusters)
         
         fromOffset = {}
         for i in range(int(self.number_partitions)):
@@ -395,14 +398,28 @@ class MiniApp(object):
         #counts=[]
         #kafka_dstream.foreachRDD(lambda t, rdd: counts.append(rdd.count()))
         
-        
-        
         #####################################################################
         # Scenario KMeans
-        if self.application == "kmeans":
+        #######################################################################################
+        # KMeans Functions
+        global decayFactor
+        decayFactor=1.0
+        global timeUnit
+        timeUnit="batches"
+        global max_value 
+        max_value = 0
+        global model
+
+        model = StreamingKMeans(k=self.number_clusters, decayFactor=decayFactor, timeUnit=timeUnit).setRandomCenters(3, 1.0, 0)
+
+        if self.application == "kmeans" or self.application == "kmeansstatic":
             print "kmeans"
             points = kafka_dstream.transform(pre_process)
             points.foreachRDD(model_update)
+        elif self.application == "kmeanspred" or self.application == "kmeansstaticpred":
+            print "kmeanspred"
+            points = kafka_dstream.transform(pre_process)
+            points.foreachRDD(model_prediction)
         else:
             print "Light Reconstruction"
             #rdd = kafka_dstream.transform(lightsource_reconstruction)
@@ -431,9 +448,9 @@ class MiniApp(object):
         filename = os.path.abspath(__file__)
         if filename[-1]=="c": filename =filename[:-1] # remove c from "spark.pyc"
         #pkg_resources.resource_filename(module, "tooth.h5")
-        cmd = """spark-submit --master %s --packages %s --conf 'spark.executor.memory=110g' %s %s %s %s %s %d %s"""% (self.spark_master, SPARK_KAFKA_PACKAGE, filename, 
+        cmd = """spark-submit --master %s --packages %s --conf 'spark.executor.memory=110g' %s %s %s %s %s %d %s %d"""% (self.spark_master, SPARK_KAFKA_PACKAGE, filename, 
                     self.spark_master, self.kafka_zk_hosts, self.topic_name, 
-                    self.scenario, 60, self.application)
+                    self.scenario, 60, self.application, self.number_clusters)
         print cmd
         return cmd
         
@@ -454,7 +471,8 @@ if __name__ == "__main__":
                      topic_name = sys.argv[3],
                      test_scenario = sys.argv[4],
                      streaming_window = sys.argv[5],
-                     application = sys.argv[6]
+                     application = sys.argv[6],
+                     number_clusters = int(sys.argv[7])
                     )
     mini.start()
 

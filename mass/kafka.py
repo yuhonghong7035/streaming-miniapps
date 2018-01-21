@@ -68,20 +68,19 @@ def produce_block_kmeans_static(block_id=1,
     count = 0
     
     print "Zookeeper: %s, Block Id: %s, Num Cluster: %d" % (kafka_zk_hosts, str(block_id), NUMBER_CLUSTER)
-
     # init Kafka
     client = KafkaClient(zookeeper_hosts=kafka_zk_hosts)
     topic = client.topics[topic_name]
-    producer = topic.get_sync_producer(partitioner=hashing_partitioner)
+    producer = topic.get_sync_producer(partitioner=hashing_partitioner, max_request_size=3086624)
     
     if producer is None: print "Producer None"; return -1
     
     # partition on number clusters
     points = get_random_cluster_points(number_points_per_message, number_dim)
+    points_strlist=str(points.tolist())
     number_messages = number_points_per_cluster*number_clusters_per_partition/number_points_per_message
     end_data_generation = time.time()
     print "Points Array Shape: %s, Number Batches: %.1f"%(points.shape, number_messages)
-
     last_index=0
     count_bytes = 0
     for i in range(number_messages):
@@ -92,7 +91,6 @@ def produce_block_kmeans_static(block_id=1,
                                       number_points_per_message,
                                       count_bytes/1024,
                                       count_bytes/1024/(time.time()-end_data_generation))) 
-        points_strlist=str(points.tolist())
         producer.produce(points_strlist, partition_key='{}'.format(count))
         count = count + 1
         last_index = last_index + number_points_per_message
@@ -190,7 +188,7 @@ def produce_block_kmeans(block_id=1,
     # init Kafka
     client = KafkaClient(zookeeper_hosts=kafka_zk_hosts)
     topic = client.topics[topic_name]
-    producer = topic.get_sync_producer(partitioner=hashing_partitioner)
+    producer = topic.get_sync_producer(partitioner=hashing_partitioner, max_request_size=3086624)
     
     if producer is None: print "Producer None"; return -1
     
@@ -314,7 +312,7 @@ class MiniApp():
         self.number_dim=number_dim     
         
         
-        if self.application_type == "kmeans" or self.application_type == "kmeans-static":
+        if self.application_type.startswith("kmeans"):
             self.number_messages = (self.number_points_per_cluster * self.number_clusters)/self.number_points_per_message
         elif self.application_type == "light":
             self.number_messages = number_messages
@@ -323,7 +321,7 @@ class MiniApp():
             self.number_points_per_cluster = -1
             self.number_points_per_message = -1
             self.number_dim=-1  
-            
+        print self.number_messages    
 
         
         self.number_parallel_tasks = number_parallel_tasks
@@ -395,11 +393,12 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
             # Using Dask Delay API
             tasks = []
             for block_id in range(self.number_parallel_tasks):
-                if self.application_type == "kmeans":
-                    print "Generate Block ID: " + str(block_id)
+                
+                if self.application_type.startswith("kmeansstatic"):
+                    #print "Application: %s, Generate Block ID: %s"%(self.application_type,str(block_id))
                     number_clusters_per_partition = self.number_clusters/self.number_parallel_tasks 
-                    #produce_block(block_id, self.kafka_zk_hosts)
-                    t = delayed(produce_block_kmeans, pure=False)(
+                    #produce_block_kmeans_static(block_id, self.kafka_zk_hosts)
+                    t = delayed(produce_block_kmeans_static, pure=False)(
                                                            block_id, 
                                                            self.kafka_zk_hosts,
                                                            number_clusters_per_partition=number_clusters_per_partition,
@@ -409,11 +408,11 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
                                                            topic_name=self.topic_name
                                                           )
                     tasks.append(t)
-                elif self.application_type == "kmeans-static":
-                    print "Generate Block ID: " + str(block_id)
+                elif self.application_type.startswith("kmeans"):
+                    #print "Application: %s, Generate Block ID: %s"%(self.application_type,str(block_id))
                     number_clusters_per_partition = self.number_clusters/self.number_parallel_tasks 
-                    #produce_block_kmeans_static(block_id, self.kafka_zk_hosts)
-                    t = delayed(produce_block_kmeans_static, pure=False)(
+                    #produce_block(block_id, self.kafka_zk_hosts)
+                    t = delayed(produce_block_kmeans, pure=False)(
                                                            block_id, 
                                                            self.kafka_zk_hosts,
                                                            number_clusters_per_partition=number_clusters_per_partition,
@@ -434,7 +433,7 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
                                                           )
                     tasks.append(t)
                 else:
-                    print "Unknown Application/Data Source Type"
+                    print "Unknown Application/Data Source Type: %s"%self.application_type
                 
                 
             print "Waiting for Dask Tasks to complete"
