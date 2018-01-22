@@ -454,7 +454,7 @@ class MiniApp(object):
         
         
     def run(self):  
-        cmd = self._get_spark_command()
+        cmd = self._get_spark_command() 
         check_output(cmd, shell=True)
         
         
@@ -470,7 +470,7 @@ class MiniApp(object):
         #pkg_resources.resource_filename(module, "tooth.h5")
         cmd = """spark-submit --master %s --packages %s --conf 'spark.executor.memory=110g' %s %s %s %s %s %d %s %d"""% (self.spark_master, SPARK_KAFKA_PACKAGE, filename, 
                     self.spark_master, self.kafka_zk_hosts, self.topic_name, 
-                    self.scenario, 60, self.application, self.number_clusters)
+                    self.scenario, 60, self.application + "-" + self.reconstruction_algorithm, self.number_clusters)
         print cmd
         return cmd
         
