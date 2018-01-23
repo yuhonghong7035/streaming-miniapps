@@ -430,7 +430,8 @@ class MiniApp(object):
         if self.application == "kmeans" or self.application == "kmeansstatic":
             print "kmeans"
             points = kafka_dstream.transform(pre_process)
-            points.foreachRDD(model_update)
+            #points.foreachRDD(model_update)
+            model.update(points, 0.0, u"batches")
         elif self.application == "kmeanspred" or self.application == "kmeansstaticpred":
             print "kmeanspred"
             points = kafka_dstream.transform(pre_process)
