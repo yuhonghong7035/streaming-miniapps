@@ -435,6 +435,8 @@ class MiniApp(object):
         elif self.application == "kmeanspred" or self.application == "kmeansstaticpred":
             print "kmeanspred"
             points = kafka_dstream.transform(pre_process)
+            #model.trainOn(points, 0.0, u"batches")
+            model.trainOn(points)
             m=model.predictOn(points)
             #m=points.foreachRDD(model_prediction)
             if m is not None:
