@@ -49,8 +49,22 @@ from pykafka import KafkaClient
 #######################################################################################
 # CONFIGURATIONS
 # Get current cluster setup from work directory
-KAFKA_HOME="/home/01131/tg804093/work/kafka_2.11-1.0.0"
-SPARK_HOME="/home/01131/tg804093/work/spark-2.2.1-bin-hadoop2.7"
+try:
+    KAFKA_HOME = os.environ['KAFKA_HOME']
+except:
+    print 'KAFKA_HOME is not set'
+    raise
+
+#KAFKA_HOME="/home/01131/tg804093/work/kafka_2.11-1.0.0"
+
+try:
+    SPARK_HOME = os.environ['SPARK_HOME']
+except:
+    print  'SPARK_HOME is not set'    #TODO: add a logger?
+    raise
+
+#SPARK_HOME="/home/01131/tg804093/work/spark-2.2.1-bin-hadoop2.7"
+
 SPARK_KAFKA_PACKAGE="org.apache.spark:spark-streaming-kafka-0-8_2.11:2.2.1"
 SPARK_APP_PORT=4040 #4041 if ngrok is running
 #SARK_MASTER="local[1]"
@@ -139,14 +153,20 @@ class BatchInfoCollector(StreamingListener):
         global run_timestamp
         info = batchCompleted.batchInfo()
         submissionTime = datetime.datetime.fromtimestamp(info.submissionTime()/1000).isoformat()
-        
-        SPARK_RESULT_FILE="results/spark-metrics-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
+        if not os.environ.get('MONITOR_URL'):  ## let the user define a different url to write the spark_metrics
+            SPARK_RESULT_FILE="results/spark-metrics-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
+        else:
+            SPARK_RESULT_FILE = os.environ.get('MONITOR_URL')   
+        window = 60 #TODO: parse the window time
+
         with open(SPARK_RESULT_FILE, "a") as output_spark_metrics:
-            output_spark_metrics.write("%s, %s, %d, %d, %d, %d,%s\n"%(str(info.batchTime()), submissionTime, \
+            output_spark_metrics.write("%s, %s, %d, %d, %d, %d, %d, %s\n"%(str(info.batchTime()), submissionTime, \
                                                          info.schedulingDelay(), 
                                                               info.processingDelay(),
                                                               info.totalDelay(), 
-                                                              info.numRecords(), SCENARIO))
+                                                              info.numRecords(),
+                                                              window,
+                                                            SCENARIO))
             output_spark_metrics.flush()
         self.batchInfosCompleted.append(batchCompleted.batchInfo())
 
@@ -358,7 +378,7 @@ class MiniApp(object):
         RESULT_FILE= "results/spark-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
         SPARK_RESULT_FILE="results/spark-metrics-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
         output_spark_metrics=open(SPARK_RESULT_FILE, "w")
-        output_spark_metrics.write("BatchTime, SubmissionTime, SchedulingDelay, ProcessingDelay, TotalDelay, NumberRecords, Scenario\n")
+        output_spark_metrics.write("BatchTime, SubmissionTime, SchedulingDelay, ProcessingDelay, TotalDelay, NumberRecords, Window, Scenario\n")
         output_spark_metrics.flush()
         output_file=open(RESULT_FILE, "w")
         output_file.write("Measurement,Spark Cores,Number Points,Number_Partitions, Time\n")
