@@ -6,6 +6,11 @@ allow larger messages:
 
 message.max.bytes = 2086624
 
+For cms generator, broker config (server.properties) needs to be adjusted to
+allow larger messages:
+
+message.max.bytes = 20862696
+
 """
 
 from pykafka import KafkaClient
@@ -15,7 +20,7 @@ import sys
 import time
 import datetime
 sys.path.append("..")
-#import saga_hadoop_utils
+# import saga_hadoop_utils
 import math
 from pykafka.partitioners import hashing_partitioner
 import uuid
@@ -246,7 +251,9 @@ def produce_block_cms_data(block_id=1, kafka_zk_hosts=None,  number_messages=1,
     producer = topic.get_sync_producer(max_request_size=12346496,
                                        partitioners=hashing_partitioner)
     data = get_cms_data()  # Define directory to include different imgs
-    data_pickled = pickle.dumps(data, pickle.HIGHEST_PROTOCOL)
+    #data_pickled = pickle.dumps(data, pickle.HIGHEST_PROTOCOL)
+    data_enc = binascii.hexlify(data).encode('utf-8')
+    data_pickled = data_enc
     print("Encoded Type: %s Len: %d" % (str(type(data_pickled)),
                                         len(data_pickled)))
 
