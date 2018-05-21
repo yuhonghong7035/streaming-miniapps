@@ -248,8 +248,8 @@ def produce_block_cms_data(block_id=1, kafka_zk_hosts=None,  number_messages=1,
     client = KafkaClient(zookeeper_hosts=kafka_zk_hosts)
     topic = client.topics[topic_name]  # max_request_size in bytes
     # image size is 10.5 MB, thus the increased msg size
-    producer = topic.get_sync_producer(max_request_size=12346496,
-                                       partitioners=hashing_partitioner)
+    producer = topic.get_sync_producer(max_request_size=23068672,
+                                       partitioner=hashing_partitioner)
     data = get_cms_data()  # Define directory to include different imgs
     #data_pickled = pickle.dumps(data, pickle.HIGHEST_PROTOCOL)
     data_enc = binascii.hexlify(data).encode('utf-8')
