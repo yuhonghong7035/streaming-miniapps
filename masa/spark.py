@@ -251,7 +251,7 @@ def model_prediction(rdd):
 ###############################################################################
 # LightSource
 
- def lightsource_reconstruction(message):
+def lightsource_reconstruction(message):
     global run_timestamp
     global work_dir
     print type(message), len(message), len(message[1])
@@ -294,8 +294,7 @@ def reconstruct(message):
 # PeakFinder
 
 def PeakFinder_Analysis(message):
-
-    import workflows.main_local_dask as main_local_dask ## fix pythonpath
+    import workflows.main_local_dask as main_local_dask 
 
     global timestamp
     global work_dir
@@ -313,6 +312,7 @@ def PeakFinder_Analysis(message):
 
     analyze = main_local_dask.primary_func(data_folder,[tf.name])
     tf.close()
+
 
     end_train = time.time()
     RESULT_FILE_PEAK = os.path.join(
