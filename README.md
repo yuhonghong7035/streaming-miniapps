@@ -1,5 +1,5 @@
 # Streaming Mini-Apps
-Mini Apps for [Pilot-Streaming](thub.com/radical-cybertools/pilot-streaming)
+Mini Apps for [Pilot-Streaming](https://github.com/radical-cybertools/pilot-streaming)
 
 
 Supported Data Productions:
