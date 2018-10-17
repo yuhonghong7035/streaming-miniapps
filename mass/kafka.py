@@ -37,6 +37,7 @@ import dask.array as da
 import dask.bag as db
 from dask.delayed import delayed
 from distributed import Client
+from distributed.diagnostics.plugin import SchedulerPlugin
 
 ########################################################################
 # Default Configuration Variables
@@ -52,6 +53,24 @@ NUMBER_PARTITIONS = 48
 TOPIC_NAME = "Throughput"
 NUMBER_PARALLEL_TASKS = 1
 NUMBER_NODES = 8
+
+
+########################################################################
+def submitCustomProfiler(profname,dask_scheduler):
+    prof = MyProfiler(profname)
+    dask_scheduler.add_plugin(prof)
+
+def removeCustomProfiler(dask_scheduler):
+    dask_scheduler.remove_plugin(dask_scheduler.plugins[-1])
+
+class MyProfiler(SchedulerPlugin):
+    def __init__(self,profname):
+        self.profile = profname
+
+    def  transition(self,key,start,finish,*args,**kargs):
+        if start =='processing' and finish== 'memory':
+            with open(self.profile,'a') as ProFile:
+                ProFile.write('{}\n'.format([key,start,finish,kargs['worker'],kargs['thread'],kargs['startstops']]))
 
 
 ########################################################################
@@ -249,7 +268,11 @@ def produce_block_cms_data(block_id=1, kafka_zk_hosts=None,  number_messages=1,
     topic = client.topics[topic_name]  # max_request_size in bytes
     # image size is 10.5 MB, thus the increased msg size
     producer = topic.get_sync_producer(max_request_size=23068672,
-                                       partitioner=hashing_partitioner)
+                                       partitioner=hashing_partitioner, 
+                                       linger_ms=5000, 
+                                       min_queued_messages=40, 
+                                       max_queued_messages=55
+                                       )
     data = get_cms_data()  # Define directory to include different imgs
     #data_pickled = pickle.dumps(data, pickle.HIGHEST_PROTOCOL)
     data_enc = binascii.hexlify(data).encode('utf-8')
@@ -261,7 +284,7 @@ def produce_block_cms_data(block_id=1, kafka_zk_hosts=None,  number_messages=1,
     count = 0
 
     for i in range(0, number_messages):
-        producer.produce(data_pickled, partition_key='{}'.format(count))
+        producer.produce(data_pickled, partition_key='{}'.format(count) )
         count += 1
 
     end = time.time()
@@ -284,7 +307,8 @@ def get_cms_data(directory=None):
     if directory is None:
         module = "mass"
         data = None
-        data_file = pkg_resources.resource_filename(module, "00000d3a.hd5")
+        #data_file = pkg_resources.resource_filename(module, "00000d3a.hd5")
+        data_file = '/gpfs/flash/users/tg829618/00000d3a.hd5'
         with open(data_file, 'r') as f:
             data = f.read()
         print("Access sample CMS generator data: " + module + "; File: \
@@ -315,7 +339,8 @@ class MiniApp():
         topic_name=TOPIC_NAME,
         application_type="kmeans",  # kmeans or light or BNL
         produce_interval=0,
-        clean_after_produce=False
+        clean_after_produce=False,
+        dask_profiler=False,
     ):
 
         self.application_type = application_type
@@ -357,6 +382,10 @@ class MiniApp():
             self.dask_distributed_client = Client(dask_scheduler)
         else:
             self.dask_distributed_client = Client(processes=False)
+
+        ## set profiler
+        if dask_profiler==True:
+            self.dask_distributed_client.run_on_scheduler(submitCustomProfiler,'Profile.txt')
 
         dask_scheduler_info = self.dask_distributed_client.scheduler_info()
         self.number_dask_workers = len(dask_scheduler_info['workers'])
@@ -466,6 +495,7 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
             print str(res)
             print "End Produce via Dask"
             end = time.time()
+            dask_distributed_client.run_on_scheduler(removeCustomProfiler)
 
             print "Number: %d, Number Parallel Tasks: %d, Runtime: %.1f" % (count_produces,
                                                                             self.number_parallel_tasks,
