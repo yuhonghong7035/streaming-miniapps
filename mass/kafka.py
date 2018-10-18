@@ -292,12 +292,13 @@ def produce_block_cms_data(block_id=1, kafka_zk_hosts=None,  number_messages=1,
     stats = {
         "block_id": block_id,
         "number_messages":  number_messages,
-        "bytes_per_message_enc": str(len(data_pickled)),
+        "bytes_per_message_enc": str(len(data_enc)),
         "bytes_per_message_bin": str(len(data)),
         "data_generation_time": "%5f" % (end_data_generation-start),
         "transmission_time":  "%.5f" % (end-end_data_generation),
         "runtime": "%.5f" % (end-start)
     }
+
 
     return stats
 
@@ -418,8 +419,12 @@ class MiniApp():
         os.system(cmd)
 
     def run(self):
+
         run_timestamp = datetime.datetime.now()
         RESULT_FILE = "results/kafka-throughput-producer-" + \
+            run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
+
+        KAFKA_FILE_RESULTS = "results/kafka-cu-producer" + \
             run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
         try:
             os.makedirs("results")
@@ -429,6 +434,9 @@ class MiniApp():
         output_file = open(RESULT_FILE, "w")
         output_file.write("Application,Number_Clusters,Number_Points_per_Cluster,Number_Dim,Number_Points_per_Message,Number_Messages,Interval,Number_Partitions,\
 Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points_per_sec,Records_per_sec,Dask_Config\n")
+
+        kafka_output_file = open(KAFKA_FILE_RESULTS,'w')
+        kafka_output_file.write("block_id,number_messages,bytes_per_message_enc,bytes_per_message_bin,data_generation_time,transmission_time,runtime\n")
 
         global_start = time.time()
         count_produces = 0
@@ -493,9 +501,17 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
             print "Waiting for Dask Tasks to complete"
             res = delayed(tasks).compute()
             print str(res)
+            print type(res)
             print "End Produce via Dask"
             end = time.time()
-            dask_distributed_client.run_on_scheduler(removeCustomProfiler)
+
+            for ares in res:
+                kafka_output_file.write(str(ares.block_id) + ',' + str(ares.number_messages) + ',' + str(ares.bytes_per_message_enc) + ',' + \
+            str(ares.bytes_per_message_bin) + str(ares.data_generation_time) + str(ares.transmission_time) + str(ares.runtime) + '\n')
+
+            kafka_output_file.flush()
+            
+        self.dask_distributed_client.run_on_scheduler(removeCustomProfiler)
 
             print "Number: %d, Number Parallel Tasks: %d, Runtime: %.1f" % (count_produces,
                                                                             self.number_parallel_tasks,
@@ -526,6 +542,7 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
             time.sleep(self.produce_interval)
 
         output_file.close()
+        kafka_output_file.close()
 
     def run_in_background(self):
         self.thread = threading.Thread(target=self.run, args=())
