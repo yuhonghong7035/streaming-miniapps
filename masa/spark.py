@@ -16,7 +16,7 @@ import logging
 logging.basicConfig(level=logging.WARN)
 import numpy as np
 import msgpack
-import urllib, json 
+import urllib.request, urllib.parse, urllib.error, json 
 import socket
 import re
 import pandas as pd
@@ -79,7 +79,7 @@ reconstruction_algorithm = "gridrec"
 def get_number_partitions(kafka_zk_hosts, topic):
     try:
         cmd = KAFKA_HOME + "/bin/kafka-topics.sh --describe --topic %s --zookeeper %s"%(topic, kafka_zk_hosts)
-        print cmd
+        print(cmd)
         out = check_output(cmd, shell=True)
         number=re.search("(?<=PartitionCount:)[0-9]*", out).group(0)
         return number
@@ -93,15 +93,15 @@ def get_application_details(sc):
         max_id = -1
         while True:
             cores = 0
-            response = urllib.urlopen(url)
+            response = urllib.request.urlopen(url)
             data = json.loads(response.read())
-            print data
+            print(data)
             for i in data:
-                print "Process %s"%i["id"]
+                print("Process %s"%i["id"])
                 if i["id"]!="driver":
                     cores = cores + i["totalCores"]
                     if int(i["id"]) > max_id: max_id = int(i["id"])
-            print "Max_id: %d, Number Executors: %d"%(max_id, NUMBER_EXECUTORS)
+            print("Max_id: %d, Number Executors: %d"%(max_id, NUMBER_EXECUTORS))
             if (max_id == (NUMBER_EXECUTORS-1)):
                 break
             time.sleep(.1)
@@ -114,7 +114,7 @@ def get_application_details(sc):
 def get_streaming_performance_details(app_id, filename):
     """curl http://localhost:4041/api/v1/applications/app-20170805185159-0004/streaming/batches"""
     url = "http://" + SPARK_LOCAL_IP + ":" + str(SPARK_APP_PORT)+ "/api/v1/applications/"+ app_id + "/streaming/batches"
-    response = urllib.urlopen(url)
+    response = urllib.request.urlopen(url)
     df=pd.read_json(response.read())
     df.to_csv(filename)
 
@@ -188,7 +188,7 @@ class BatchInfoCollector(StreamingListener):
 
 def printOffsetRanges(rdd):
     for o in offsetRanges:
-        print "%s %s %s %s" % (o.topic, o.partition, o.fromOffset, o.untilOffset)
+        print("%s %s %s %s" % (o.topic, o.partition, o.fromOffset, o.untilOffset))
 
 
 ######################################################################################
@@ -238,7 +238,7 @@ def model_prediction(rdd):
     count = -1 #rdd.count()
     start = time.time()
     lastest_model = model.latestModel()
-    print "Call Predict On:"
+    print("Call Predict On:")
     model_output=lastest_model.predictOn(rdd)
     end = time.time()
     RESULT_FILE= "results/spark-model_update-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
@@ -251,7 +251,7 @@ def model_prediction(rdd):
 def lightsource_reconstruction(message):
     global run_timestamp
     global work_dir
-    print type(message),len(message), len(message[1])
+    print(type(message),len(message), len(message[1]))
     count = -1 #rdd.count()
     start = time.time()
     reconstruct(message[1])
@@ -312,8 +312,8 @@ class MiniApp(object):
         self.topic_name = topic_name
         self.kafka_zk_hosts = kafka_zk_hosts
         self.kafka_client = KafkaClient(zookeeper_hosts=self.kafka_zk_hosts)
-        self.kafka_brokers = ",".join(["%s:%d"%(i.host, i.port) for i in self.kafka_client.brokers.values()])
-        print self.kafka_brokers 
+        self.kafka_brokers = ",".join(["%s:%d"%(i.host, i.port) for i in list(self.kafka_client.brokers.values())])
+        print(self.kafka_brokers) 
         self.number_partitions = get_number_partitions(self.kafka_zk_hosts, self.topic_name)
         self.scenario = test_scenario  
         self.application = application
@@ -328,7 +328,7 @@ class MiniApp(object):
         global SCENARIO
         SCENARIO=self.scenario
         self.streaming_window = int(streaming_window)
-        print "Streaming Window: %d sec"%self.streaming_window
+        print("Streaming Window: %d sec"%self.streaming_window)
                     
     def start(self):  
         #######################################################################################
@@ -368,22 +368,22 @@ class MiniApp(object):
         
         
         
-        print "Topic: %s, Number Partitions: %s, Spark Master:%s, Kafka Broker: %s Clusters: %d"%(self.topic_name, 
+        print("Topic: %s, Number Partitions: %s, Spark Master:%s, Kafka Broker: %s Clusters: %d"%(self.topic_name, 
                                                                    str(self.number_partitions),
                                                                    self.spark_master,
                                                                    self.kafka_brokers,
-                                                                   self.number_clusters)
+                                                                   self.number_clusters))
         
         fromOffset = {}
         for i in range(int(self.number_partitions)):
             topicPartion = TopicAndPartition(self.topic_name, i)
-            fromOffset = {topicPartion: long(0)}
+            fromOffset = {topicPartion: int(0)}
         
         #######################################################################################
         # Spark Helper
         kafka_dstream = None
         if KAFKA_STREAM == "Direct":
-            print "Use Direct Kafka Connection"
+            print("Use Direct Kafka Connection")
             kafka_dstream = KafkaUtils.createDirectStream(ssc, [self.topic_name], 
                                                           kafkaParams={"metadata.broker.list": self.kafka_brokers,
                                                                      "auto.offset.reset" : "smallest",
@@ -391,7 +391,7 @@ class MiniApp(object):
                                                                        "session.timeout.ms": "3600000",
                                                                       "fetch.message.max.bytes" : "10000000"})
         elif KAFKA_STREAM == "Receiver":
-            print "Use Receiver Kafka Connection"
+            print("Use Receiver Kafka Connection")
             kafka_dstream = KafkaUtils.createStream(ssc, self.kafka_zk_hosts, 
                                                      "spark-streaming-consumer", 
                                                      {self.topic_name: 1})
@@ -428,12 +428,12 @@ class MiniApp(object):
         model = StreamingKMeans(k=self.number_clusters, decayFactor=decayFactor, timeUnit=timeUnit).setRandomCenters(3, 1.0, 0)
 
         if self.application == "kmeans" or self.application == "kmeansstatic":
-            print "kmeans"
+            print("kmeans")
             points = kafka_dstream.transform(pre_process)
             #points.foreachRDD(model_update)
-            model.update(points, 0.0, u"batches")
+            model.update(points, 0.0, "batches")
         elif self.application == "kmeanspred" or self.application == "kmeansstaticpred":
-            print "kmeanspred"
+            print("kmeanspred")
             points = kafka_dstream.transform(pre_process)
             #model.trainOn(points, 0.0, u"batches")
             model.trainOn(points)
@@ -442,9 +442,9 @@ class MiniApp(object):
             if m is not None:
                 m.pprint()
             else:
-                print "Result None"
+                print("Result None")
         else:
-            print "Light Reconstruction"
+            print("Light Reconstruction")
             #rdd = kafka_dstream.transform(lightsource_reconstruction)
             res=kafka_dstream.map(lightsource_reconstruction)
             res.pprint()
@@ -474,7 +474,7 @@ class MiniApp(object):
         cmd = """spark-submit --master %s --packages %s --conf 'spark.executor.memory=110g' %s %s %s %s %s %d %s %d"""% (self.spark_master, SPARK_KAFKA_PACKAGE, filename, 
                     self.spark_master, self.kafka_zk_hosts, self.topic_name, 
                     self.scenario, 60, self.application + "-" + self.reconstruction_algorithm, self.number_clusters)
-        print cmd
+        print(cmd)
         return cmd
         
         
@@ -484,7 +484,7 @@ class MiniApp(object):
 
 
 if __name__ == "__main__":
-    print(str(sys.argv))
+    print((str(sys.argv)))
     
     spark_details = {'master_url':sys.argv[1]}
     kafka_details = {'master_url':sys.argv[2]}

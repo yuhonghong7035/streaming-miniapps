@@ -17,18 +17,18 @@ VERSION_FILE="VERSION"
 
 def update_version():
     if not os.path.isdir(".git"):
-        print "This does not appear to be a Git repository."
+        print("This does not appear to be a Git repository.")
         return
     try:
         p = subprocess.Popen(["git", "describe",
                               "--tags", "--always"],
                              stdout=subprocess.PIPE)
     except EnvironmentError:
-        print "Unable to run git, not modifying VERSION"
+        print("Unable to run git, not modifying VERSION")
         return
     stdout = p.communicate()[0]
     if p.returncode != 0:
-        print "Unable to run git, not modifying VERSION"
+        print("Unable to run git, not modifying VERSION")
         return
     
     ver = stdout.strip()
@@ -36,7 +36,7 @@ def update_version():
     f = open(fn, "w")
     f.write(ver)
     f.close()
-    print "SAGA-Hadoop VERSION: '%s'" % ver
+    print("SAGA-Hadoop VERSION: '%s'" % ver)
 
 
 def get_version():
