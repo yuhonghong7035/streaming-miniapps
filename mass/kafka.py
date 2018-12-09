@@ -1,5 +1,5 @@
 """ 
-Kafka Producer Multiprocess
+Kafka/Kinesis Producer Multiprocess
 
 For light source, broker config (server.properties) needs to be adjusted to allow larger messages:
 
@@ -21,6 +21,11 @@ import pkg_resources
 import threading
 import base64
 import binascii
+
+########################################################################
+# Kinesis
+import boto3
+
 
 ########################################################################
 # Dask
@@ -55,7 +60,7 @@ def get_random_cluster_points(number_points, number_dim):
 
 
 def produce_block_kmeans_static(block_id=1,
-                  kafka_zk_hosts=None,
+                  broker=None,
                   number_clusters_per_partition=NUMBER_CLUSTER,
                   number_points_per_cluster=NUMBER_POINTS_PER_CLUSTER,
                   number_points_per_message = NUMBER_POINTS_PER_MESSAGE,
@@ -66,13 +71,13 @@ def produce_block_kmeans_static(block_id=1,
     count_bytes  = 0
     count = 0
     
-    print("Zookeeper: %s, Block Id: %s, Num Cluster: %d" % (kafka_zk_hosts, str(block_id), NUMBER_CLUSTER))
+    print("Broker: %s, Block Id: %s, Num Cluster: %d" % (broker.resource_url, str(block_id), NUMBER_CLUSTER))
     # init Kafka
-    client = KafkaClient(zookeeper_hosts=kafka_zk_hosts)
-    topic = client.topics[topic_name]
-    producer = topic.get_sync_producer(partitioner=hashing_partitioner, max_request_size=3086624)
-    
-    if producer is None: print("Producer None"); return -1
+    #client = KafkaClient(zookeeper_hosts=kafka_zk_hosts)
+    #topic = client.topics[topic_name]
+    #producer = topic.get_sync_producer(partitioner=hashing_partitioner, max_request_size=3086624)
+    #
+    #if producer is None: print("Producer None"); return -1
     
     # partition on number clusters
     points = get_random_cluster_points(number_points_per_message, number_dim)
@@ -90,7 +95,7 @@ def produce_block_kmeans_static(block_id=1,
                                       number_points_per_message,
                                       count_bytes/1024,
                                       count_bytes/1024/(time.time()-end_data_generation))) 
-        producer.produce(points_strlist, partition_key='{}'.format(count))
+        broker.produce(points_strlist)
         count = count + 1
         last_index = last_index + number_points_per_message
         count_bytes = count_bytes + len(points_strlist)
@@ -109,7 +114,7 @@ def produce_block_kmeans_static(block_id=1,
 
 
 def produce_block_kmeans(block_id=1,
-                  kafka_zk_hosts=None,
+                  broker=None,
                   number_clusters_per_partition=NUMBER_CLUSTER,
                   number_points_per_cluster=NUMBER_POINTS_PER_CLUSTER,
                   number_points_per_message = NUMBER_POINTS_PER_MESSAGE,
@@ -120,14 +125,14 @@ def produce_block_kmeans(block_id=1,
     count_bytes  = 0
     count = 0
     
-    print("Zookeeper: %s, Block Id: %s, Num Cluster: %d" % (kafka_zk_hosts, str(block_id), NUMBER_CLUSTER))
+    print("Broker: %s, Block Id: %s, Num Cluster: %d" % (broker.resource_url, str(block_id), NUMBER_CLUSTER))
 
     # init Kafka
-    client = KafkaClient(zookeeper_hosts=kafka_zk_hosts)
-    topic = client.topics[topic_name]
-    producer = topic.get_sync_producer(partitioner=hashing_partitioner, max_request_size=3086624)
-    
-    if producer is None: print("Producer None"); return -1
+    #client = KafkaClient(zookeeper_hosts=kafka_zk_hosts)
+    #topic = client.topics[topic_name]
+    #producer = topic.get_sync_producer(partitioner=hashing_partitioner, max_request_size=3086624)
+    #
+    #if producer is None: print("Producer None"); return -1
     
     # partition on number clusters
     points = []
@@ -154,7 +159,7 @@ def produce_block_kmeans(block_id=1,
                                       count_bytes/1024/(time.time()-end_data_generation))) 
         points_batch = points_np[last_index:last_index+number_points_per_message]
         points_strlist=str(points_batch.tolist())
-        producer.produce(points_strlist.encode(),partition_key='{}'.format(count).encode())
+        broker.produce(points_strlist.encode())
         count = count + 1
         last_index = last_index + number_points_per_message
         count_bytes = count_bytes + len(points_strlist)
@@ -175,16 +180,13 @@ def produce_block_kmeans(block_id=1,
 # Light Source
 
 def produce_block_light(block_id=1,
-                        kafka_zk_hosts=None,
+                        broker=None,
                         number_messages = 1,
                         topic_name=TOPIC_NAME):
     
     start = time.time()
     
-    client = KafkaClient(zookeeper_hosts=kafka_zk_hosts)
-    topic = client.topics[topic_name]
-    producer = topic.get_sync_producer(max_request_size=3086624,
-                                       partitioner=hashing_partitioner)
+
     data = get_lightsource_data()
     #data_b64 = data.encode( 'utf-8' )
     data_enc = binascii.hexlify(data) #.encode('utf-8')
@@ -193,8 +195,8 @@ def produce_block_light(block_id=1,
     end_data_generation = time.time()
     
     count = 0
-    for i in range(number_messages):
-        producer.produce(data_enc.encode(), partition_key='{}'.format(count).encode())
+    for i in range(math.ceil(number_messages)):
+        broker.produce(data)
         count = count+ 1
     end = time.time()
    
@@ -213,19 +215,84 @@ def get_lightsource_data():
     module = "mass"
     data = None
     data_file = pkg_resources.resource_filename(module, "tooth.h5")
-    with open(data_file, "r") as f:
+    with open(data_file, "rb") as f:
         data = f.read()
     print(("Access sample data: " + module + "; File: tooth.h5; Size: " + str(len(data))))
     return data
 
 #######################################################################################
 
+class KinesisBroker():
+    
+    def __init__(self, resource_url):
+        import boto3
+        boto3.setup_default_session(profile_name='dev')
+        self.kinesis_client = boto3.client('kinesis', region_name='us-east-1')
+        self.resource_url = resource_url
+        self.number_brokers=1
+        self.broker_type="kinesis"
+        
+
+        
+    def produce(self, message):
+        #print("Produce to: %s"%self.resource_url.split("/")[1])
+        put_response = self.kinesis_client.put_record(
+                        StreamName=self.resource_url.split("/")[1],
+                        Data=message,
+                        PartitionKey=str(uuid.uuid4()))
+        
+    def clean(self):
+        pass
+    
+    
+
+
+class KafkaBroker():
+    
+    def __init__(self, resource_url, topic_name="streaming-miniapps", number_partitions=1):
+        self.resource_url = resource_url
+        self.kafka_client = KafkaClient(zookeeper_hosts=self.resource_url)
+        self.number_brokers = len(self.kafka_client.brokers)
+        self.topic = self.kafka_client.topics[topic_name]
+        self.producer = self.topic.get_sync_producer(max_request_size=3086624) # use default random partitioner
+        # alternative partitioner: partitioner=hashing_partitioner
+        self.broker_type="kafka"
+        self.topic_name=topic_name
+        self.number_partitions=number_partitions
+
+        
+    def produce(self, message):
+        #print("Produce to: %s"%self.topic_name)
+        self.topic = self.kafka_client.topics[self.topic_name]
+        self.producer = self.topic.get_sync_producer(max_request_size=3086624)
+        self.producer.produce(message)
+    
+    def clean(self):
+        cmd="%s/bin/kafka-topics.sh --delete --zookeeper %s --topic %s"%(KAFKA_HOME, self.resource_url, self.topic_name)
+        print(cmd)
+        #os.system(cmd)
+        #time.sleep(60)
+    
+        cmd="%s/bin/kafka-topics.sh --create --zookeeper %s --replication-factor 1 --partitions %d --topic %s"%\
+                                                (KAFKA_HOME, self.resource_url, self.number_partitions, self.topic_name)
+        print(cmd)
+        os.system(cmd)
+    
+        cmd="%s/bin/kafka-topics.sh --describe --zookeeper %s --topic %s"%(KAFKA_HOME, self.resource_url, self.topic_name)
+        print(cmd)
+        os.system(cmd)
+        
+        
+        
+#######################################################################################        
 class MiniApp():
     
     def __init__(
                  self, 
                  dask_scheduler=None,
                  kafka_zk_hosts=None,
+                 broker_service=None, # kinesis | kafka
+                 resource_url=None, # kafka_zk_hosts | kinesis arn
                  number_parallel_tasks=NUMBER_PARALLEL_TASKS,
                  number_clusters=NUMBER_CLUSTER,  # kmeans
                  number_points_per_cluster=NUMBER_POINTS_PER_CLUSTER,  # kmeans
@@ -259,8 +326,7 @@ class MiniApp():
             self.number_points_per_cluster = -1
             self.number_points_per_message = -1
             self.number_dim=-1  
-        print(self.number_messages)    
-
+        print("Number Messages: " + str(self.number_messages))
         
         self.number_parallel_tasks = number_parallel_tasks
         self.number_produces = number_produces
@@ -268,11 +334,25 @@ class MiniApp():
         self.topic_name = topic_name
         self.produce_interval = produce_interval
         self.clean_after_produce = clean_after_produce
-        # Kafka / Dask
-        self.kafka_zk_hosts = kafka_zk_hosts
-        self.kafka_client = KafkaClient(zookeeper_hosts=kafka_zk_hosts)
-        self.number_kafka_brokers= len(self.kafka_client.brokers)
+
+        # Broker Service: Kafka vs. Kinesis
+        self.broker_service = broker_service
+        self.resource_url = resource_url
+        self.broker=None
+        if self.broker_service=="kinesis":
+            print("Initialize Kinesis")
+            self.broker = KinesisBroker(self.resource_url)
+        else:
+            print("Initialize Kafka")
+            if kafka_zk_hosts==None: 
+                self.kafka_zk_hosts = self.resource_url
+            else:
+                self.resource_url=kafka_zk_hosts
+            self.broker = KafkaBroker(self.resource_url, self.topic_name, self.number_partitions)
+            #self.kafka_client = KafkaClient(zookeeper_hosts=kafka_zk_hosts)
+            #self.number_kafka_brokers= len(self.kafka_client.brokers)
         
+        # Dask
         self.dask_scheduler = dask_scheduler
         if dask_scheduler is not None:
             self.dask_distributed_client = Client(dask_scheduler)   
@@ -283,8 +363,8 @@ class MiniApp():
         self.number_dask_workers = len(dask_scheduler_info['workers'])
         self.number_dask_cores_per_worker = dask_scheduler_info['workers'][list(dask_scheduler_info['workers'].keys())[0]]["ncores"]
           
-        print(("Kafka: %s, Dask: %s, Number Dask Nodes: %d,  Number Parallel Producers: %d"%
-                                     (self.kafka_zk_hosts, 
+        print(("Kafka/Kinesis: %s, Dask: %s, Number Dask Nodes: %d,  Number Parallel Producers: %d"%
+                                     (self.resource_url, 
                                       str(self.dask_distributed_client.scheduler_info()["address"]),
                                       self.number_dask_workers,
                                       self.number_parallel_tasks
@@ -292,27 +372,9 @@ class MiniApp():
               ))
 
     
-    def clean_kafka(self):
-        cmd="%s/bin/kafka-topics.sh --delete --zookeeper %s --topic %s"%(KAFKA_HOME, self.kafka_zk_hosts, self.topic_name)
-        print(cmd)
-        #os.system(cmd)
-        #time.sleep(60)
-    
-        cmd="%s/bin/kafka-topics.sh --create --zookeeper %s --replication-factor 1 --partitions %d --topic %s"%\
-                                                (KAFKA_HOME, self.kafka_zk_hosts, self.number_partitions, self.topic_name)
-        print(cmd)
-        os.system(cmd)
-    
-        cmd="%s/bin/kafka-topics.sh --describe --zookeeper %s --topic %s"%(KAFKA_HOME, self.kafka_zk_hosts, self.topic_name)
-        print(cmd)
-        os.system(cmd)
-        
- 
-        
-    
     def run(self):          
         run_timestamp=datetime.datetime.now()
-        RESULT_FILE= "results/kafka-throughput-producer-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
+        RESULT_FILE= "results/broker-throughput-producer-" + run_timestamp.strftime("%Y%m%d-%H%M%S") + ".csv"
         try:
             os.makedirs("results")
         except:
@@ -320,11 +382,11 @@ class MiniApp():
         
         output_file=open(RESULT_FILE, "w")
         output_file.write("Application,Number_Clusters,Number_Points_per_Cluster,Number_Dim,Number_Points_per_Message,Number_Messages,Interval,Number_Partitions,\
-Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points_per_sec,Records_per_sec,Dask_Config\n")
+Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points_per_sec,Records_per_sec,Dask_Config,Broker\n")
         
         global_start = time.time()
         count_produces = 0
-        self.clean_kafka()
+        self.broker.clean()
         while count_produces < self.number_produces:
             #if self.clean_after_produce: self.clean_kafka()
             start = time.time()
@@ -338,7 +400,7 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
                     #produce_block_kmeans_static(block_id, self.kafka_zk_hosts)
                     t = delayed(produce_block_kmeans_static, pure=False)(
                                                            block_id, 
-                                                           self.kafka_zk_hosts,
+                                                           self.broker,
                                                            number_clusters_per_partition=number_clusters_per_partition,
                                                            number_points_per_cluster=self.number_points_per_cluster,
                                                            number_points_per_message = self.number_points_per_message,
@@ -352,7 +414,7 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
                     #produce_block(block_id, self.kafka_zk_hosts)
                     t = delayed(produce_block_kmeans, pure=False)(
                                                            block_id, 
-                                                           self.kafka_zk_hosts,
+                                                           self.broker,
                                                            number_clusters_per_partition=number_clusters_per_partition,
                                                            number_points_per_cluster=self.number_points_per_cluster,
                                                            number_points_per_message = self.number_points_per_message,
@@ -365,7 +427,7 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
                     number_messages_per_task = self.number_messages/self.number_parallel_tasks
                     t = delayed(produce_block_light, pure=False)(
                                                            block_id, 
-                                                           self.kafka_zk_hosts,
+                                                           self.broker,
                                                            number_messages_per_task,
                                                            topic_name=self.topic_name
                                                           )
@@ -384,7 +446,7 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
                                                                           self.number_parallel_tasks, 
                                                                                        end-start))
             output_file.write(
-                               "%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.5f,%.5f,%.5f,dask-distributed\n"%\
+                               "%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%.5f,%.5f,%.5f,dask-distributed,%s\n"%\
                                (
                                   self.application_type,
                                   self.number_clusters,
@@ -397,10 +459,11 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
                                   self.number_parallel_tasks, 
                                   self.number_dask_workers,
                                   self.number_dask_cores_per_worker,
-                                  self.number_kafka_brokers,
+                                  self.broker.number_brokers,
                                   (end-start), 
                                   (self.number_total_points/(end-start)), 
-                                  (self.number_messages/(end-start))
+                                  (self.number_messages/(end-start)),
+                                  self.broker.broker_type
                                 )
                                )
             output_file.flush()
