@@ -21,6 +21,8 @@ import pkg_resources
 import threading
 import base64
 import binascii
+import random
+import traceback
 
 ########################################################################
 # Kinesis
@@ -137,13 +139,6 @@ def produce_block_kmeans(block_id=1,
     count = 0
     
     print("Broker: %s, Block Id: %s, Num Cluster: %d" % (broker.resource_url, str(block_id), NUMBER_CLUSTER))
-
-    # init Kafka
-    #client = KafkaClient(zookeeper_hosts=kafka_zk_hosts)
-    #topic = client.topics[topic_name]
-    #producer = topic.get_sync_producer(partitioner=hashing_partitioner, max_request_size=3086624)
-    #
-    #if producer is None: print("Producer None"); return -1
     
     # partition on number clusters
     points = []
@@ -270,8 +265,69 @@ def get_lightsource_data():
     print(("Access sample data: " + module + "; File: tooth.h5; Size: " + str(len(data))))
     return data
 
+
+#######################################################################################
+# Synthetic Data
+
+def produce_block_synthetic(block_id=1,
+                            broker_url=None,
+                            broker_service="Kafka",
+                            number_messages = 1,
+                            message_size = 1024, #in bytes
+                            topic_name=TOPIC_NAME,
+                            number_partitions=1):
+    
+    if broker_service=="kinesis":
+        broker = KinesisBroker(broker_url)
+    else:
+        broker = KafkaBroker(broker_url, topic_name, number_partitions)
+        
+    start = time.time()
+    data= bytes((random.getrandbits(8) for i in range(message_size)))
+    
+    end_data_generation = time.time()
+    success=True
+    try:
+        count = 0
+        for i in range(math.ceil(number_messages)):
+            broker.produce(data)
+            count = count+ 1
+        end = time.time()
+    
+    except:
+        print("Error sending message")
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        print("*** print_tb:")
+        traceback.print_tb(exc_traceback, limit=1, file=sys.stdout)
+        print("*** print_exception:")
+        # exc_type below is ignored on 3.5 and later
+        traceback.print_exception(exc_type, exc_value, exc_traceback,
+                              limit=2, file=sys.stdout)
+        success=False
+    
+    stats = {
+                "block_id": block_id,
+                "number_messages" :  number_messages,
+                "bytes_per_message": len(data),
+                "data_generation_time": "NA",
+                "transmission_time":  "NA",
+                "runtime": "NA",
+            }
+    if success:    
+        stats = {
+            "block_id": block_id, 
+            "number_messages" :  number_messages,
+            "bytes_per_message": len(data),
+            "data_generation_time": "%5f"%(end_data_generation-start),
+            "transmission_time":  "%.5f"%(end-end_data_generation),
+            "runtime": "%.5f"%(end-start)
+        }
+    return stats
+
+
 #######################################################################################
 
+                    
 class KinesisBroker():
     
     def __init__(self, resource_url):
@@ -348,7 +404,8 @@ class MiniApp():
                  number_points_per_cluster=NUMBER_POINTS_PER_CLUSTER,  # kmeans
                  number_points_per_message = NUMBER_POINTS_PER_MESSAGE,  # kmeans
                  number_dim=NUMBER_DIM, # kmeans
-                 number_messages=1, # light
+                 number_messages=1, # light, synthethic
+                 message_size=1024, # synthethic
                  number_produces=NUMBER_OF_PRODUCES,
                  number_partitions=NUMBER_PARTITIONS,
                  topic_name = TOPIC_NAME,
@@ -356,7 +413,67 @@ class MiniApp():
                  produce_interval = 0,
                  clean_after_produce = False
                  ):
-        
+        """
+            Initialize a Mini App
+
+            Parameters
+            ----------
+            
+            dask_scheduler : str 
+                             URL to Dask Scheduler: tcp://192.168.0.34
+            
+            kafka_zk_hosts : str
+                             deprecated
+            
+            broker_service : str
+                              Broker Service to connect to [ kinesis | kafka ]
+                              
+            resource_url: str
+                          URL of Broker Service
+                          
+            number_parallel_tasks: int
+                                    Number of parallel dask tasks for produce
+            
+            
+            number_clusters : int
+                              KMeans Mini-App Only
+                              
+            number_points_per_cluster: int
+                                        KMeans Mini-App Only
+                                        
+            number_points_per_message: int 
+                                       KMeans Mini-App Only
+            
+            number_dim: int
+                        KMeans Mini-App Only
+                        
+            number_messages: int 
+                             Number of Messages to be send (Light, Synthetic Mini-App)
+            
+            message_size: int 
+                          Message Size in Bytes (Synthetic Mini-App)
+            
+            number_produces:  int
+                              Number of repeats of messages to be generated with above description
+            
+            produce_interval: int
+                              Sleep Time between Produces 
+                              
+            number_partitions: int
+                               Number of Partitions for Topic at Broker (Kafka Only, fixed for Kinesis topic)
+                               
+            topic_name: str 
+                        Topic Name for Kafka
+                        
+            application_type: str
+                              Mini-App Type:= "kmeans", # kmeans or light
+            
+            
+            clean_after_produce: boolean 
+                                 Clean Topic between produce rounds
+
+        """
+                    
         self.application_type = application_type
 
         # KMeans specific configuration
@@ -365,17 +482,26 @@ class MiniApp():
         self.number_points_per_message = number_points_per_message
         self.number_total_points = self.number_points_per_cluster * self.number_clusters
         self.number_dim=number_dim     
-        
+        self.number_messages = -1 # to be set application specific
         
         if self.application_type.startswith("kmeans"):
             self.number_messages = (self.number_points_per_cluster * self.number_clusters)/self.number_points_per_message
         elif self.application_type.startswith("light"):
-            self.number_messages = number_messages
+            self.number_messages = number_messages    
             self.number_total_points = number_messages # 1 message contains 1 point (image)
             self.number_clusters = -1
             self.number_points_per_cluster = -1
             self.number_points_per_message = -1
             self.number_dim=-1  
+        elif self.application_type.startswith("synthetic"):
+            self.number_messages = number_messages
+            self.number_total_points = number_messages
+            self.message_size=message_size
+            self.number_clusters = -1
+            self.number_points_per_cluster = -1
+            self.number_points_per_message = -1
+            self.number_dim=-1  
+                    
         print("Number Messages: " + str(self.number_messages))
         
         self.number_parallel_tasks = number_parallel_tasks
@@ -479,26 +605,50 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
                                                            topic_name=self.topic_name,
                                                            number_partitions=self.number_partitions)
                     tasks.append(t)
+                elif self.application_type.startswith("synthetic"):
+                    number_messages_per_task = self.number_messages/self.number_parallel_tasks
+                    t = self.dask_distributed_client.submit(produce_block_synthetic, block_id, 
+                                                           self.resource_url,                                                                                                      self.broker_service,
+                                                           number_messages_per_task,
+                                                           message_size = 1024,
+                                                           topic_name=self.topic_name,
+                                                           number_partitions=self.number_partitions)
+                    tasks.append(t)                    
                 else:
                     print("Unknown Application/Data Source Type: %s"%self.application_type)
                 
-                
-            print("Waiting for Dask Tasks to complete")
-            res = self.dask_distributed_client.gather(tasks)
-            print("End Produce via Dask")
-            end = time.time()
-            # Compute Statistics
-            runtime=(end-start)
-            points_per_sec=self.number_total_points/runtime
-            message_per_sec=self.number_messages/runtime
-            bytes_per_message = res[0]['bytes_per_message']
+            timeout = 1800
+            bytes_per_message = 0
+            print("Waiting for Dask Tasks to complete - Set Timeout to: %d"%timeout)
+            try:
+                distributed.wait(tasks, timeout=timeout)
+                res = self.dask_distributed_client.gather(tasks)
+                print("End Produce via Dask")
+                end = time.time()
             
-            if True in map(lambda a: a["runtime"]=="NA", res):
+                # Compute Statistics
+                runtime=(end-start)
+                points_per_sec=self.number_total_points/runtime
+                message_per_sec=self.number_messages/runtime
+                bytes_per_message = res[0]['bytes_per_message']
+                # Check whether all tasks completed on time
+                if True in map(lambda a: a["runtime"]=="NA", res):
+                    runtime="NA"
+                    points_per_sec="NA"
+                    message_per_sec="NA"
+            except:
+                print("Timeout of %d expired. Failed run"%timeout)
                 runtime="NA"
                 points_per_sec="NA"
                 message_per_sec="NA"
-            
-            
+                print("Error sending message")
+                exc_type, exc_value, exc_traceback = sys.exc_info()
+                print("*** print_tb:")
+                traceback.print_tb(exc_traceback, limit=1, file=sys.stdout)
+                print("*** print_exception:")
+                # exc_type below is ignored on 3.5 and later
+                traceback.print_exception(exc_type, exc_value, exc_traceback, limit=2, file=sys.stdout)
+                        
             logging.debug("Type: " + str(type(bytes_per_message)) + " Bytes: " + str(bytes_per_message))
              
             print("Number: %d, Number Parallel Tasks: %d, Runtime: %s"%(count_produces, 
