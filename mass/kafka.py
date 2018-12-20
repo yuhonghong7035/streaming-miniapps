@@ -313,6 +313,7 @@ def produce_block_synthetic(block_id=1,
                 "transmission_time":  "NA",
                 "runtime": "NA",
             }
+    print(stats)
     if success:    
         stats = {
             "block_id": block_id, 
@@ -610,7 +611,7 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
                     t = self.dask_distributed_client.submit(produce_block_synthetic, block_id, 
                                                            self.resource_url,                                                                                                      self.broker_service,
                                                            number_messages_per_task,
-                                                           message_size = 1024,
+                                                           message_size = self.message_size,
                                                            topic_name=self.topic_name,
                                                            number_partitions=self.number_partitions)
                     tasks.append(t)                    
