@@ -26,9 +26,9 @@ import time
 import subprocess
 
 
-def run_benchmark(num_broker_nodes, num_partitions, application_scenario, number_parallel_tasks):
-    number_parallel_tasks
-    number_parallel_tasks = num_producer_nodes * number_parallel_tasks
+def run_benchmark(num_broker_nodes, num_producer_nodes, num_partitions, application_scenario, number_parallel_tasks):
+    
+    number_parallel_tasks = int(num_producer_nodes) * int(number_parallel_tasks)
     dask_pilot_description = {
         "resource": "slurm+ssh://login1.wrangler.tacc.utexas.edu",
         "working_directory": os.path.join('/work/01131/tg804093/wrangler/', "work"),
@@ -76,7 +76,7 @@ def run_benchmark(num_broker_nodes, num_partitions, application_scenario, number
         number_messages=number_messages,  # light, synthetic
         message_size=message_size,
         number_produces=1,
-        number_partitions=num_broker_nodes * num_partitions,
+        number_partitions=int(num_broker_nodes) * int(num_partitions),
         topic_name="test-" + run_id,
         application_type=application
     )
@@ -89,8 +89,8 @@ def run_benchmark(num_broker_nodes, num_partitions, application_scenario, number
     except:
         pass
 
-def run_benchmark_in_background(num_broker_nodes, num_partitions, application_scenario, number_parallel_tasks):
-    cmd = "python kinesis_producer_benchmark.py %s %s %s %s"%(num_broker_nodes, num_partitions, application_scenario, number_parallel_tasks)
+def run_benchmark_in_background(num_broker_nodes, num_producer_nodes, num_partitions, application_scenario, number_parallel_tasks):
+    cmd = "python kinesis_producer_benchmark.py %s %s %s %s %s"%(num_broker_nodes,                                                             num_producer_nodes, num_partitions, application_scenario, number_parallel_tasks)
     print("Run command: %s"%cmd)
     benchmark_process = subprocess.Popen(cmd, shell=True)
     benchmark_process.wait()
@@ -98,14 +98,14 @@ def run_benchmark_in_background(num_broker_nodes, num_partitions, application_sc
 
 
 if __name__ == "__main__":
-
-    if len(sys.argv==4):
+    if len(sys.argv)==6:
         # run in background
         print("Run One Benchmark Scenario")
         run_benchmark(num_broker_nodes=sys.argv[1],
-                      num_partitions=sys.argv[4],
-                      application_scenario=sys.argv[3],
-                      number_parallel_tasks=sys.argv[4])
+                      num_producer_nodes=sys.argv[2],
+                      num_partitions=sys.argv[3],
+                      application_scenario=sys.argv[4],
+                      number_parallel_tasks=sys.argv[5])
 
     else:
         print("Run Benchmark Loop")
@@ -122,9 +122,10 @@ if __name__ == "__main__":
                                 # for npt_exponent in range(0, math.floor(math.log2(num_partitions))+1):
                                 # number_parallel_tasks=2**npt_exponent
                                 run_benchmark_in_background(num_broker_nodes=num_broker_nodes,
-                                              num_partitions=num_partitions,
-                                              application_scenario=application_scenario,
-                                              number_parallel_tasks=number_parallel_tasks)
+                                                            num_producer_nodes=num_producer_nodes,
+                                                            num_partitions=num_partitions,
+                                                            application_scenario=application_scenario,
+                                                            number_parallel_tasks=number_parallel_tasks)
                 try:
                              time.sleep(60)
                 except:
