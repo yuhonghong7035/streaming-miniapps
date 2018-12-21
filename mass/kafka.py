@@ -283,7 +283,7 @@ def produce_block_synthetic(block_id=1,
         broker = KafkaBroker(broker_url, topic_name, number_partitions)
         
     start = time.time()
-    data= bytes((random.getrandbits(8) for i in range(message_size)))
+    data= bytes((random.getrandbits(8) for i in range(int(message_size))))
     
     end_data_generation = time.time()
     success=True
@@ -572,7 +572,10 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
             # Using Dask Delay API
             tasks = []
             for block_id in range(self.number_parallel_tasks):
-                print("Application: %s, Broker: %s, Number Partitions: %d, Generate Block ID: %s/%d"%(self.application_type,self.broker_service, self.number_partitions, str(block_id),self.number_parallel_tasks-1))
+                print("Application: %s, Broker: %s, Number Partitions: %d,\
+                      Number Parallel Tasks: %d, Generate Block ID: %s/%d"%        
+                      (self.application_type,self.broker_service, self.number_partitions, 
+                       self.number_parallel_tasks,str(block_id),self.number_parallel_tasks-1))
                 if self.application_type.startswith("kmeansstatic"):
                     t = self.dask_distributed_client.submit(produce_block_kmeans_static, block_id, 
                                                            self.resource_url,
@@ -618,14 +621,14 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
                 else:
                     print("Unknown Application/Data Source Type: %s"%self.application_type)
                 
-            timeout = 1800
+            timeout = 3600
             bytes_per_message = 0
             print("Waiting for Dask Tasks to complete - Set Timeout to: %d"%timeout)
             try:
                 distributed.wait(tasks, timeout=timeout)
                 res = self.dask_distributed_client.gather(tasks)
-                print("End Produce via Dask")
                 end = time.time()
+                print("All Tasks completed in %.3f sec"%(end-start))
             
                 # Compute Statistics
                 runtime=(end-start)
@@ -652,8 +655,9 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
                         
             logging.debug("Type: " + str(type(bytes_per_message)) + " Bytes: " + str(bytes_per_message))
              
-            print("Number: %d, Number Parallel Tasks: %d, Runtime: %s"%(count_produces, 
+            print("Number: %d, Number Parallel Tasks: %d, Message Size: %s, Runtime: %s"%(count_produces, 
                                                                         self.number_parallel_tasks, 
+                                                                        str(bytes_per_message),
                                                                         str(runtime)))
             output_file.write(
                                "%s,%d,%d,%d,%d,%s,%d,%d,%d,%d,%d,%d,%d,%s,%s,%s,dask-distributed,%s\n"%\
