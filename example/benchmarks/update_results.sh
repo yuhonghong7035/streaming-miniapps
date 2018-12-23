@@ -2,7 +2,7 @@
 
 DATE=`date '+%Y%m%d_%H%M%S'`
 
-if [ $# -eq 0 ]
+if [ $# -eq 1 ]
     then
         echo "Create new Result Directory"
         mkdir results/${DATE}

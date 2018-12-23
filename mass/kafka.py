@@ -83,10 +83,9 @@ def produce_block_kmeans_static(block_id=1,
     
     print("Broker: %s, Block Id: %s, Num Cluster: %d" % (broker.resource_url, str(block_id), NUMBER_CLUSTER))
    
-    
     # partition on number clusters
     points = get_random_cluster_points(number_points_per_message, number_dim)
-    points_strlist=str(points.tolist())
+    points_strlist=points.dumps() #str(points.tolist())
     number_messages = number_points_per_cluster*number_clusters_per_partition/number_points_per_message
     end_data_generation = time.time()
     print("Points Array Shape: %s, Number Batches: %.1f"%(points.shape, number_messages))
@@ -159,15 +158,15 @@ def produce_block_kmeans(block_id=1,
         for i in range(math.ceil(number_messages)):
             logging.debug("Messages#: %d, Points: %d - %d, Points/Message: %d, KBytes: %.1f, KBytes/sec: %s"%\
                                          (num_messages+1,
-                                          last_index,                                                                                           
+                                          last_index,                                                               
                                           last_index+number_points_per_message, 
-                                          
                                           number_points_per_message,
                                           count_bytes/1024,
                                           count_bytes/1024/(time.time()-end_data_generation))) 
             points_batch = points_np[last_index:last_index+number_points_per_message]
-            points_strlist=str(points_batch.tolist())
-            broker.produce(points_strlist.encode())
+            points_strlist=points_batch.dumps() #str(points_batch.tolist())
+            #print("Points: " + str(points_strlist))
+            broker.produce(points_strlist)
             count = count + 1 
             last_index = last_index + number_points_per_message
             count_bytes = count_bytes + len(points_strlist)
@@ -177,7 +176,7 @@ def produce_block_kmeans(block_id=1,
         print("Error sending message")
         success=False
             
-    
+    broker.cancel()
     stats = {
                 "block_id": block_id,
                 "number_messages" :  num_messages,
@@ -235,6 +234,7 @@ def produce_block_light(block_id=1,
         print("Error sending message")
         success=False
     
+    broker.cancel()
     stats = {
                 "block_id": block_id,
                 "number_messages" :  number_messages,
@@ -305,6 +305,7 @@ def produce_block_synthetic(block_id=1,
                               limit=2, file=sys.stdout)
         success=False
     
+    broker.cancel()
     stats = {
                 "block_id": block_id,
                 "number_messages" :  number_messages,
@@ -351,6 +352,9 @@ class KinesisBroker():
     def clean(self):
         pass
     
+    def cancel(self):
+        pass
+    
     
 
 
@@ -373,6 +377,10 @@ class KafkaBroker():
         self.topic = self.kafka_client.topics[self.topic_name]
         self.producer = self.topic.get_sync_producer(max_request_size=3086624)
         self.producer.produce(message)
+        
+    
+    def cancel(self):
+        self.producer.stop()
     
     def clean(self):
         cmd="%s/bin/kafka-topics.sh --delete --zookeeper %s --topic %s"%(KAFKA_HOME, self.resource_url, self.topic_name)
@@ -505,9 +513,9 @@ class MiniApp():
                     
         print("Number Messages: " + str(self.number_messages))
         
-        self.number_parallel_tasks = number_parallel_tasks
-        self.number_produces = number_produces
-        self.number_partitions = number_partitions
+        self.number_parallel_tasks = int(number_parallel_tasks)
+        self.number_produces = int(number_produces)
+        self.number_partitions = int(number_partitions)
         self.topic_name = topic_name
         self.produce_interval = produce_interval
         self.clean_after_produce = clean_after_produce
@@ -686,6 +694,10 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
             time.sleep(self.produce_interval)
         
         output_file.close()
+        try:
+            self.dask_distributed_client.run_on_scheduler(lambda dask_scheduler=None: dask_scheduler.close() & sys.exit(0))
+        except:
+            pass
         
         
         
