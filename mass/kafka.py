@@ -81,7 +81,7 @@ def produce_block_kmeans_static(block_id=1,
     else:
         broker = KafkaBroker(broker_url, topic_name, number_partitions)
     
-    print("Broker: %s, Block Id: %s, Num Cluster: %d" % (broker.resource_url, str(block_id), NUMBER_CLUSTER))
+    print("Broker: %s, Block Id: %s, Num Cluster in partition: %d" % (broker.resource_url, str(block_id), number_clusters_per_partition))
    
     # partition on number clusters
     points = get_random_cluster_points(number_points_per_message, number_dim)
@@ -550,7 +550,7 @@ class MiniApp():
         self.number_dask_workers = len(dask_scheduler_info['workers'])
         self.number_dask_cores_per_worker = dask_scheduler_info['workers'][list(dask_scheduler_info['workers'].keys())[0]]["ncores"]
         print(str(dask_scheduler_info))
-        print(("Kafka/Kinesis: %s, Dask: %s, Number Dask Nodes: %d,  Number Parallel Producers: %d"%
+        print(("Kafka/Kinesis: %s, Dask: %s, Number Dask Nodes: %d, Number Parallel Producers: %d"%
                                      (self.resource_url, 
                                       str(self.dask_distributed_client.scheduler_info()["address"]),
                                       self.number_dask_workers,
@@ -694,10 +694,10 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
             time.sleep(self.produce_interval)
         
         output_file.close()
-        try:
-            self.dask_distributed_client.run_on_scheduler(lambda dask_scheduler=None: dask_scheduler.close() & sys.exit(0))
-        except:
-            pass
+        #try:
+        #    self.dask_distributed_client.run_on_scheduler(lambda dask_scheduler=None: dask_scheduler.close() & sys.exit(0))
+        #except:
+        #    pass
         
         
         
