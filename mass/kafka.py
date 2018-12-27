@@ -23,6 +23,7 @@ import base64
 import binascii
 import random
 import traceback
+from confluent_kafka import Producer, Consumer
 
 ########################################################################
 # Kinesis
@@ -358,30 +359,48 @@ class KinesisBroker():
     
     
 
-
 class KafkaBroker():
     
-    def __init__(self, resource_url, topic_name="streaming-miniapps", number_partitions=1):
+    def __init__(self, resource_url, topic_name="streaming-miniapps", number_partitions=1, kafka_client="confluent"):
         self.resource_url = resource_url
         self.kafka_client = KafkaClient(zookeeper_hosts=self.resource_url)
         self.number_brokers = len(self.kafka_client.brokers)
-        self.topic = self.kafka_client.topics[topic_name]
-        self.producer = self.topic.get_sync_producer(max_request_size=3086624) # use default random partitioner
-        # alternative partitioner: partitioner=hashing_partitioner
-        self.broker_type="kafka"
+        self.bootstrap_server=self.kafka_client.brokers[0].host.decode("utf-8")+":"+str(self.kafka_client.brokers[0].port)
+                                                                                        
+        #print(self.kafka_client.brokers[0].host.decode("utf-8"))
+        #print(str(self.kafka_client.brokers[0].port))
+        print("Bootstrap Server: %s"%self.bootstrap_server)
+        if kafka_client=="confluent":
+            self.producer = Producer({'bootstrap.servers': self.bootstrap_server})
+            self.broker_type="confluent-kafka"
+        else:
+            self.topic = self.kafka_client.topics[topic_name]
+            self.producer = self.topic.get_sync_producer(max_request_size=3086624) # use default random partitioner
+            # alternative partitioner: partitioner=hashing_partitioner
+            self.broker_type="PyKafka"
         self.topic_name=topic_name
         self.number_partitions=number_partitions
+        print("Kafka Client: %s"%self.broker_type)
 
         
     def produce(self, message):
-        #print("Produce to: %s"%self.topic_name)
+        print("Produce to: %s"%self.topic_name)
         self.topic = self.kafka_client.topics[self.topic_name]
-        self.producer = self.topic.get_sync_producer(max_request_size=3086624)
-        self.producer.produce(message)
+        if self.broker_type=="kafka":
+            self.producer = self.topic.get_sync_producer(max_request_size=3086624)
+            self.producer.produce(message)
+        else:
+            print("Produce Confluent Kafka")
+            self.producer.produce(self.topic_name, message) #, callback=delivery_report)
+            self.producer.flush()
         
     
     def cancel(self):
-        self.producer.stop()
+        if self.broker_type=="kafka":
+            self.producer.stop()
+        else:
+            pass
+    
     
     def clean(self):
         cmd="%s/bin/kafka-topics.sh --delete --zookeeper %s --topic %s"%(KAFKA_HOME, self.resource_url, self.topic_name)
@@ -396,7 +415,48 @@ class KafkaBroker():
     
         cmd="%s/bin/kafka-topics.sh --describe --zookeeper %s --topic %s"%(KAFKA_HOME, self.resource_url, self.topic_name)
         print(cmd)
-        os.system(cmd)
+        os.system(cmd)    
+    
+    
+
+#class KafkaBroker():
+#    
+#    def __init__(self, resource_url, topic_name="streaming-miniapps", number_partitions=1):
+#        self.resource_url = resource_url
+#        self.kafka_client = KafkaClient(zookeeper_hosts=self.resource_url)
+#        self.number_brokers = len(self.kafka_client.brokers)
+#        self.topic = self.kafka_client.topics[topic_name]
+#        self.producer = self.topic.get_sync_producer(max_request_size=3086624) # use default random partitioner
+#        # alternative partitioner: partitioner=hashing_partitioner
+#        self.broker_type="kafka"
+#        self.topic_name=topic_name
+#        self.number_partitions=number_partitions
+#
+#        
+#    def produce(self, message):
+#        #print("Produce to: %s"%self.topic_name)
+#        self.topic = self.kafka_client.topics[self.topic_name]
+#        self.producer = self.topic.get_sync_producer(max_request_size=3086624)
+#        self.producer.produce(message)
+#        
+#    
+#    def cancel(self):
+#        self.producer.stop()
+#    
+#    def clean(self):
+#        cmd="%s/bin/kafka-topics.sh --delete --zookeeper %s --topic %s"%(KAFKA_HOME, self.resource_url, self.topic_name)
+#        print(cmd)
+#        #os.system(cmd)
+#        #time.sleep(60)
+#    
+#        cmd="%s/bin/kafka-topics.sh --create --zookeeper %s --replication-factor 1 --partitions %d --topic %s"%\
+#                                                (KAFKA_HOME, self.resource_url, self.number_partitions, self.topic_name)
+#        print(cmd)
+#        os.system(cmd)
+#    
+#        cmd="%s/bin/kafka-topics.sh --describe --zookeeper %s --topic %s"%(KAFKA_HOME, self.resource_url, self.topic_name)
+#        print(cmd)
+#        os.system(cmd)
         
         
         
@@ -534,7 +594,8 @@ class MiniApp():
                 self.kafka_zk_hosts = self.resource_url
             else:
                 self.resource_url=kafka_zk_hosts
-            self.broker = KafkaBroker(self.resource_url, self.topic_name, self.number_partitions)
+            self.broker = KafkaBroker(self.resource_url, self.topic_name, 
+                                      self.number_partitions, broker_service)
             #self.kafka_client = KafkaClient(zookeeper_hosts=kafka_zk_hosts)
             #self.number_kafka_brokers= len(self.kafka_client.brokers)
         
