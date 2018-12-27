@@ -9,4 +9,4 @@
 #------------------General Options---------------------
 export TACC_LAUNCHER_PPN=24
 
-cd $HOME/notebooks/streaming-miniapps/example/benchmarks; python consumer_benchmark.py
+cd $HOME/notebooks/streaming-miniapps/example/benchmarks; python masa_lambda_benchmark.py
