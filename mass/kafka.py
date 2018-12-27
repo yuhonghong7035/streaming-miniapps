@@ -64,13 +64,14 @@ def get_random_cluster_points(number_points, number_dim):
 
 
 def produce_block_kmeans_static(block_id=1,
-                  broker=None,
-                  broker_service=None,
+                  broker_url=None,
+                  broker_service="Kafka",
                   number_clusters_per_partition=NUMBER_CLUSTER,
                   number_points_per_cluster=NUMBER_POINTS_PER_CLUSTER,
                   number_points_per_message = NUMBER_POINTS_PER_MESSAGE,
                   number_dim=NUMBER_DIM,
-                  topic_name=TOPIC_NAME):
+                  topic_name=TOPIC_NAME,
+                  number_partitions=1):
     start = time.time()
     num_messages = 0
     count_bytes  = 0
@@ -91,7 +92,7 @@ def produce_block_kmeans_static(block_id=1,
     print("Points Array Shape: %s, Number Batches: %.1f"%(points.shape, number_messages))
     last_index=0
     count_bytes = 0
-    for i in range(number_messages):
+    for i in range(math.ceil(number_messages)):
         logging.debug("Messages#: %d, Points: %d - %d, Points/Message: %d, KBytes: %.1f, KBytes/sec: %s"%\
                                      (num_messages+1,
                                       last_index,                                                                                           
@@ -585,6 +586,7 @@ Number_Processes,Number_Nodes,Number_Cores_Per_Node, Number_Brokers, Time,Points
                       (self.application_type,self.broker_service, self.number_partitions, 
                        self.number_parallel_tasks,str(block_id),self.number_parallel_tasks-1))
                 if self.application_type.startswith("kmeansstatic"):
+                    number_clusters_per_partition = self.number_clusters/self.number_parallel_tasks 
                     t = self.dask_distributed_client.submit(produce_block_kmeans_static, block_id, 
                                                            self.resource_url,
                                                            self.broker_service,
